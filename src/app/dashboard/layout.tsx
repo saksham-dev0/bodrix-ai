@@ -9,7 +9,9 @@ const DashboardLayout = async ({ children }: { children: React.ReactNode }) => {
   return (
     <SidebarProvider defaultOpen={defaultOpen}>
       <DashboardSidebar />
-      <main className="flex flex-1 flex-col">{children}</main>
+      <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
+        {children}
+      </main>
     </SidebarProvider>
   );
 };

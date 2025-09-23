@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "handsontable/dist/handsontable.full.min.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -176,4 +177,117 @@
     letter-spacing: var(--tracking-normal);
     font-weight: 500;
   }
+}
+
+/* Handsontable Excel-like styling */
+.handsontable-container {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 11px;
+}
+
+.handsontable-container .htCore {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.handsontable-container .htCore td {
+  border: 1px solid #d0d7de;
+  padding: 2px 4px;
+  background-color: #ffffff;
+  color: #24292f;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.handsontable-container .htCore td.current {
+  background-color: #e3f2fd !important;
+  border: 2px solid #2196f3 !important;
+}
+
+.handsontable-container .htCore td.area {
+  background-color: #e3f2fd !important;
+}
+
+.handsontable-container .htCore th {
+  background-color: #f6f8fa;
+  border: 1px solid #d0d7de;
+  color: #656d76;
+  font-weight: 600;
+  font-size: 10px;
+  text-align: center;
+  padding: 4px 2px;
+}
+
+.handsontable-container .htCore th.htRowHeader {
+  background-color: #f6f8fa;
+  color: #656d76;
+  font-weight: 600;
+  text-align: center;
+}
+
+.handsontable-container .htCore th.htColHeader {
+  background-color: #f6f8fa;
+  color: #656d76;
+  font-weight: 600;
+  text-align: center;
+}
+
+.handsontable-container .htCore th.current {
+  background-color: #e3f2fd !important;
+  border: 2px solid #2196f3 !important;
+}
+
+/* Excel-like alternating row colors */
+.handsontable-container .htCore tr:nth-child(even) td {
+  background-color: #ffffff;
+}
+
+.handsontable-container .htCore tr:nth-child(odd) td {
+  background-color: #f8f9fa;
+}
+
+/* Selection styling */
+.handsontable-container .htCore td.area {
+  background-color: #e3f2fd !important;
+}
+
+.handsontable-container .htCore td.current.area {
+  background-color: #bbdefb !important;
+}
+
+/* Context menu styling */
+.handsontable-container .htContextMenu {
+  background-color: #ffffff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
+}
+
+.handsontable-container .htContextMenu .ht_master .htCore td {
+  padding: 6px 12px;
+  border: none;
+  background-color: transparent;
+}
+
+.handsontable-container .htContextMenu .ht_master .htCore td:hover {
+  background-color: #f6f8fa;
+}
+
+/* Scrollbar styling */
+.handsontable-container .htCore::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.handsontable-container .htCore::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.handsontable-container .htCore::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 6px;
+}
+
+.handsontable-container .htCore::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }
