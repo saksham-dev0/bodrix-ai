@@ -10,11 +10,13 @@ import React, {
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { buildA1Range } from "@/lib/utils";
 
 interface Props {
   spreadsheetId: Id<"spreadsheets">;
   onDataChange?: (data: any[], isSave?: boolean) => void;
   refreshTrigger?: number;
+  onSelectionChange?: (rangeA1: string) => void;
 }
 
 export interface SheetRef {
@@ -28,7 +30,7 @@ const CDN_CSS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.css";
 const CDN_JS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.js";
 
 export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
-  ({ spreadsheetId, onDataChange, refreshTrigger }, ref) => {
+  ({ spreadsheetId, onDataChange, refreshTrigger, onSelectionChange }, ref) => {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const initDoneRef = useRef(false);
     const updateSpreadsheetData = useMutation(api.spreadsheets.updateSpreadsheetData);
@@ -106,6 +108,39 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           grid.on && grid.on("cell-edited", pushChangeToParent);
           grid.on && grid.on("cell-changed", pushChangeToParent);
           grid.on && grid.on("sheet-changed", pushChangeToParent);
+          grid.on && grid.on("finished-editing", pushChangeToParent);
+
+          // selection change -> notify parent with A1 range
+          const notifySelection = (...args: any[]) => {
+            try {
+              if (!onSelectionChange) return;
+              // x-spreadsheet emits either (cell, ri, ci) for single or (cell, selection) for range
+              // selection can be { sri, sci, eri, eci }
+              let sri: number, sci: number, eri: number, eci: number;
+              if (args.length >= 3 && typeof args[1] === "number" && typeof args[2] === "number") {
+                sri = args[1];
+                sci = args[2];
+                eri = sri;
+                eci = sci;
+              } else if (args.length >= 2 && args[1] && typeof args[1] === "object") {
+                const sel = args[1];
+                sri = sel.sri ?? sel.ri ?? 0;
+                sci = sel.sci ?? sel.ci ?? 0;
+                eri = sel.eri ?? sel.ri2 ?? sri;
+                eci = sel.eci ?? sel.ci2 ?? sci;
+              } else {
+                return;
+              }
+              const r1 = Math.min(sri, eri);
+              const c1 = Math.min(sci, eci);
+              const r2 = Math.max(sri, eri);
+              const c2 = Math.max(sci, eci);
+              const a1 = buildA1Range(r1, c1, r2, c2);
+              onSelectionChange(a1);
+            } catch (e) {}
+          };
+          grid.on && grid.on("cell-selected", notifySelection);
+          grid.on && grid.on("cells-selected", notifySelection);
 
           // observe iframe size and keep grid attributes + resize in-sync
           const ro = new ResizeObserver(() => {

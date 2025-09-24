@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 
 /**
  * Get all spreadsheets for a project
@@ -18,6 +19,7 @@ export const getProjectSpreadsheets = query({
       createdAt: v.number(),
       updatedAt: v.number(),
       data: v.optional(v.string()),
+      charts: v.optional(v.string()),
       activeSheetIndex: v.optional(v.number()),
       workbookData: v.optional(v.string()),
       xSpreadsheetData: v.optional(v.string()),
@@ -123,6 +125,7 @@ export const getSpreadsheetData = query({
       createdAt: v.number(),
       updatedAt: v.number(),
       data: v.optional(v.string()),
+      charts: v.optional(v.string()),
       activeSheetIndex: v.optional(v.number()),
       workbookData: v.optional(v.string()),
       xSpreadsheetData: v.optional(v.string()),
@@ -426,6 +429,178 @@ export const importCSVToSpreadsheet = mutation({
       console.error("Error importing CSV:", error);
       throw new Error("Failed to import CSV data");
     }
+  },
+});
+
+/**
+ * CHARTS: CRUD linked to spreadsheet cell ranges
+ */
+export const listCharts = query({
+  args: { spreadsheetId: v.id("spreadsheets") },
+  returns: v.array(
+    v.object({
+      _id: v.id("charts"),
+      _creationTime: v.number(),
+      spreadsheetId: v.id("spreadsheets"),
+      ownerId: v.id("users"),
+      title: v.string(),
+      type: v.union(
+        v.literal("line"),
+        v.literal("bar"),
+        v.literal("area"),
+        v.literal("pie")
+      ),
+      range: v.string(),
+      options: v.optional(
+        v.object({
+          xIsFirstRowHeader: v.optional(v.boolean()),
+          xIsFirstColumn: v.optional(v.boolean()),
+        })
+      ),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) throw new Error("Spreadsheet not found");
+    if (spreadsheet.ownerId !== user._id)
+      throw new Error("Not authorized to view charts");
+
+    return await ctx.db
+      .query("charts")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .order("asc")
+      .collect();
+  },
+});
+
+export const createChart = mutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    title: v.string(),
+    type: v.union(
+      v.literal("line"),
+      v.literal("bar"),
+      v.literal("area"),
+      v.literal("pie")
+    ),
+    range: v.string(),
+    options: v.optional(
+      v.object({
+        xIsFirstRowHeader: v.optional(v.boolean()),
+        xIsFirstColumn: v.optional(v.boolean()),
+      })
+    ),
+  },
+  returns: v.id("charts"),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) throw new Error("Spreadsheet not found");
+    if (spreadsheet.ownerId !== user._id)
+      throw new Error("Not authorized to create charts for this spreadsheet");
+
+    const now = Date.now();
+    return await ctx.db.insert("charts", {
+      spreadsheetId: args.spreadsheetId,
+      ownerId: user._id,
+      title: args.title,
+      type: args.type,
+      range: args.range,
+      options: args.options,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+export const updateChart = mutation({
+  args: {
+    chartId: v.id("charts"),
+    title: v.optional(v.string()),
+    type: v.optional(
+      v.union(v.literal("line"), v.literal("bar"), v.literal("area"), v.literal("pie"))
+    ),
+    range: v.optional(v.string()),
+    options: v.optional(
+      v.object({
+        xIsFirstRowHeader: v.optional(v.boolean()),
+        xIsFirstColumn: v.optional(v.boolean()),
+      })
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const chart = await ctx.db.get(args.chartId);
+    if (!chart) throw new Error("Chart not found");
+    if (chart.ownerId !== user._id)
+      throw new Error("Not authorized to edit this chart");
+
+    const updates: Partial<{
+      title: string;
+      type: "line" | "bar" | "area" | "pie";
+      range: string;
+      options: { xIsFirstRowHeader?: boolean; xIsFirstColumn?: boolean };
+      updatedAt: number;
+    }> = {};
+    if (args.title !== undefined) updates.title = args.title;
+    if (args.type !== undefined) updates.type = args.type as any;
+    if (args.range !== undefined) updates.range = args.range;
+    if (args.options !== undefined) updates.options = args.options as any;
+    updates.updatedAt = Date.now();
+
+    await ctx.db.patch(args.chartId, updates as any);
+    return null;
+  },
+});
+
+export const deleteChart = mutation({
+  args: { chartId: v.id("charts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const chart = await ctx.db.get(args.chartId);
+    if (!chart) return null;
+    if (chart.ownerId !== user._id)
+      throw new Error("Not authorized to delete this chart");
+
+    await ctx.db.delete(args.chartId);
+    return null;
   },
 });
 

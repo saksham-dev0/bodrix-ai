@@ -6,6 +6,7 @@ import { api } from "../../../../../../convex/_generated/api";
 import { Id } from "../../../../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import ChartJSFromRange from "@/components/ChartJSFromRange";
 import {
   ArrowLeft,
   Save,
@@ -16,6 +17,7 @@ import {
   Underline,
   Download,
   Upload,
+  Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -45,6 +47,10 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   );
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [hasChanges, setHasChanges] = useState(false);
+  const [sheetDataCache, setSheetDataCache] = useState<any[] | null>(null);
+  const [newChartRange, setNewChartRange] = useState("A1:B6");
+  const [newChartType, setNewChartType] = useState<"line" | "bar" | "area" | "pie">("line");
+  const [newChartTitle, setNewChartTitle] = useState("My Chart");
 
   const spreadsheetEngineRef = useRef<SheetRef>(null);
 
@@ -71,6 +77,18 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
     {
       projectId,
     }
+  );
+
+  // Charts
+  const charts = useQuery(
+    api.spreadsheets.listCharts,
+    spreadsheetId ? { spreadsheetId } : "skip"
+  );
+  const createChart = useMutation(api.spreadsheets.createChart);
+  const deleteChart = useMutation(api.spreadsheets.deleteChart);
+  const spreadsheetDoc = useQuery(
+    api.spreadsheets.getSpreadsheetData,
+    spreadsheetId ? { spreadsheetId } : "skip"
   );
 
   // Create or load spreadsheet
@@ -120,7 +138,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
 
   // Handlers for data changes
   const handleDataChange = useCallback((data: any[]) => {
-    console.log("Data change logged:", data);
+    setSheetDataCache(data);
     setHasChanges(true);
   }, []);
 
@@ -184,6 +202,16 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
     },
     [importCSV, spreadsheetId]
   );
+
+  const handleDeleteChart = useCallback(async (chartId: Id<"charts">) => {
+    try {
+      await deleteChart({ chartId });
+      toast.success("Chart deleted successfully!");
+    } catch (error) {
+      console.error("Error deleting chart:", error);
+      toast.error("Failed to delete chart");
+    }
+  }, [deleteChart]);
 
   if (!isLoaded) {
     return (
@@ -307,6 +335,49 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
                 <Save className="w-3 h-3 mr-0.5" />
                 <span className="hidden lg:inline">Save</span>
               </Button>
+              <div className="h-7 w-px bg-border mx-0.5" />
+              <Input
+                value={newChartRange}
+                onChange={(e) => setNewChartRange(e.target.value)}
+                placeholder="Range e.g. A1:C10"
+                className="h-7 w-28 text-xs"
+              />
+              <select
+                value={newChartType}
+                onChange={(e) => setNewChartType(e.target.value as any)}
+                className="h-7 text-xs border rounded px-1"
+              >
+                <option value="line">Line</option>
+                <option value="bar">Bar</option>
+                <option value="area">Area</option>
+                <option value="pie">Pie</option>
+              </select>
+              <Input
+                value={newChartTitle}
+                onChange={(e) => setNewChartTitle(e.target.value)}
+                placeholder="Chart title"
+                className="h-7 w-28 text-xs"
+              />
+              <Button
+                size="sm"
+                className="h-7 px-1 text-xs"
+                onClick={async () => {
+                  if (!spreadsheetId) return;
+                  try {
+                    await createChart({
+                      spreadsheetId,
+                      title: newChartTitle || "Chart",
+                      type: newChartType,
+                      range: newChartRange,
+                    });
+                    toast.success("Chart added");
+                  } catch (e) {
+                    toast.error("Failed to add chart");
+                  }
+                }}
+              >
+                Add chart
+              </Button>
             </div>
           </div>
         </div>
@@ -319,7 +390,45 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
           onDataChange={handleDataChange}
           spreadsheetId={spreadsheetId}
           refreshTrigger={refreshTrigger}
+          onSelectionChange={(a1) => setNewChartRange(a1)}
         />
+      </div>
+
+      {/* Charts Panel */}
+      <div className="border-t bg-white flex-shrink-0 w-full">
+        <div className="px-3 py-2 grid gap-2">
+          <div className="text-xs text-muted-foreground">Charts</div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {charts?.map((c, idx) => (
+              <div key={`${c._id}-${idx}`} className="border rounded p-2 relative group">
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => handleDeleteChart(c._id)}
+                    title="Delete chart"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                </div>
+                <ChartJSFromRange
+                  sheetData={
+                    sheetDataCache ||
+                    spreadsheetEngineRef.current?.getData() ||
+                    (spreadsheetDoc?.data ? JSON.parse(spreadsheetDoc.data) : [])
+                  }
+                  range={c.range}
+                  type={c.type as any}
+                  title={c.title}
+                />
+              </div>
+            ))}
+            {!charts?.length && (
+              <div className="text-xs text-muted-foreground px-1">No charts yet.</div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
