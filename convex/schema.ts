@@ -51,6 +51,7 @@ export default defineSchema({
       v.literal("pie")
     ),
     range: v.string(), // e.g. "A1:C10"
+    sheetName: v.optional(v.string()), // Name of the sheet to use for chart data
     options: v.optional(
       v.object({
         xIsFirstRowHeader: v.optional(v.boolean()),

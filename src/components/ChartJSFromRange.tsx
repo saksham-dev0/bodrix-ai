@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -16,6 +16,15 @@ import {
 } from "chart.js";
 import { Line, Bar, Pie } from "react-chartjs-2";
 import { extractRange2D } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Download, Eye } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 // Register Chart.js components
 ChartJS.register(
@@ -34,10 +43,13 @@ ChartJS.register(
 type ChartType = "line" | "bar" | "pie" | "area";
 
 interface Props {
-  sheetData: any[]; // x-spreadsheet data for all sheets, we use first sheet
+  sheetData: any[]; // x-spreadsheet data for all sheets
   range: string; // A1 range like "A1:C10"
   type: ChartType;
   title?: string;
+  showSheetName?: boolean; // Whether to show sheet name in chart header
+  sheetName?: string; // Name of the sheet to use for chart data
+  showViewDownload?: boolean; // Whether to show view/download buttons
 }
 
 // Default colors for charts
@@ -183,9 +195,41 @@ const pieChartOptions = {
   },
 };
 
-export default function ChartJSFromRange({ sheetData, range, type, title }: Props) {
-  const sheet = sheetData?.[0];
+export default function ChartJSFromRange({ sheetData, range, type, title, showSheetName = true, sheetName, showViewDownload = true }: Props) {
+  const chartRef = useRef<any>(null);
+  // Find the sheet by name, fallback to first sheet if not found
+  const sheet = useMemo(() => {
+    if (sheetName) {
+      const foundSheet = sheetData?.find(s => s.name === sheetName);
+      if (foundSheet) return foundSheet;
+    }
+    // For existing charts without sheetName, use first sheet
+    return sheetData?.[0];
+  }, [sheetData, sheetName]);
+  
   const matrix = useMemo(() => extractRange2D(sheet, range), [sheet, range]);
+  
+  // Get sheet name for display
+  const displaySheetName = sheet?.name || sheetName || "Sheet1";
+  
+  // Debug logging
+  console.log("ChartJSFromRange:", { 
+    sheetName, 
+    displaySheetName,
+    totalSheets: sheetData?.length,
+    sheetData: sheetData?.map(s => s.name),
+    foundSheet: !!sheet
+  });
+
+  // Download chart as PNG
+  const downloadChart = () => {
+    if (chartRef.current) {
+      const link = document.createElement('a');
+      link.download = `${title || 'chart'}-${displaySheetName}.png`;
+      link.href = chartRef.current.toBase64Image();
+      link.click();
+    }
+  };
 
   const chartData = useMemo(() => {
     if (type === "pie") {
@@ -202,22 +246,16 @@ export default function ChartJSFromRange({ sheetData, range, type, title }: Prop
     );
   }
 
-  return (
-    <div className="w-full">
-      {title && (
-        <div className="text-sm font-medium mb-2 px-2 text-gray-700">
-          {title}
-        </div>
-      )}
-      <div className="h-64 w-full">
-        {type === "line" && (
-          <Line data={chartData} options={chartOptions} />
-        )}
-        {type === "bar" && (
-          <Bar data={chartData} options={chartOptions} />
-        )}
-        {type === "area" && (
+  const ChartComponent = () => {
+    switch (type) {
+      case "line":
+        return <Line ref={chartRef} data={chartData} options={chartOptions} />;
+      case "bar":
+        return <Bar ref={chartRef} data={chartData} options={chartOptions} />;
+      case "area":
+        return (
           <Line 
+            ref={chartRef}
             data={{
               ...chartData,
               datasets: chartData.datasets.map(dataset => ({
@@ -228,10 +266,64 @@ export default function ChartJSFromRange({ sheetData, range, type, title }: Prop
             }} 
             options={chartOptions} 
           />
+        );
+      case "pie":
+        return <Pie ref={chartRef} data={chartData} options={pieChartOptions} />;
+      default:
+        return <Line ref={chartRef} data={chartData} options={chartOptions} />;
+    }
+  };
+
+  return (
+    <div className="w-full">
+      {showSheetName && (
+        <div className="text-xs font-medium mb-1 px-2 text-gray-500 bg-gray-50 py-1 rounded-t">
+          {displaySheetName}
+        </div>
+      )}
+      <div className="flex items-center justify-between px-2 py-1">
+        {title && (
+          <div className="text-sm font-medium text-gray-700">
+            {title}
+          </div>
         )}
-        {type === "pie" && (
-          <Pie data={chartData} options={pieChartOptions} />
+        {showViewDownload && (
+          <div className="flex gap-1">
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                  <Eye className="w-3 h-3" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center justify-between">
+                    <span>{title || 'Chart'} - {displaySheetName}</span>
+                    <Button onClick={downloadChart} size="sm" className="h-8">
+                      <Download className="w-3 h-3 mr-1" />
+                      Download
+                    </Button>
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="w-full h-96">
+                  <ChartComponent />
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 w-6 p-0"
+              onClick={downloadChart}
+              title="Download chart"
+            >
+              <Download className="w-3 h-3" />
+            </Button>
+          </div>
         )}
+      </div>
+      <div className="h-64 w-full">
+        <ChartComponent />
       </div>
     </div>
   );

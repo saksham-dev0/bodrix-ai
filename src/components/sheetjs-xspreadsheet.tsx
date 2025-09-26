@@ -17,6 +17,7 @@ interface Props {
   onDataChange?: (data: any[], isSave?: boolean) => void;
   refreshTrigger?: number;
   onSelectionChange?: (rangeA1: string) => void;
+  onActiveSheetChange?: (sheetName: string, sheetIndex: number) => void;
 }
 
 export interface SheetRef {
@@ -24,13 +25,15 @@ export interface SheetRef {
   exportToExcel: () => void;
   importFromExcel: (file: File) => Promise<void>;
   getData: () => any[];
+  getActiveSheetIndex: () => number;
+  getActiveSheet: () => any;
 }
 
 const CDN_CSS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.css";
 const CDN_JS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.js";
 
 export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
-  ({ spreadsheetId, onDataChange, refreshTrigger, onSelectionChange }, ref) => {
+  ({ spreadsheetId, onDataChange, refreshTrigger, onSelectionChange, onActiveSheetChange }, ref) => {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const initDoneRef = useRef(false);
     const updateSpreadsheetData = useMutation(api.spreadsheets.updateSpreadsheetData);
@@ -141,6 +144,51 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           };
           grid.on && grid.on("cell-selected", notifySelection);
           grid.on && grid.on("cells-selected", notifySelection);
+
+          // track active sheet changes
+          const notifyActiveSheetChange = () => {
+            try {
+              if (!onActiveSheetChange) return;
+              const data = grid.getData();
+              // Try different methods to get active sheet index
+              let activeSheetIndex = 0;
+              if (grid.getActiveSheetIndex) {
+                activeSheetIndex = grid.getActiveSheetIndex();
+              } else if (grid.getCurrentSheetIndex) {
+                activeSheetIndex = grid.getCurrentSheetIndex();
+              } else if (grid.getActiveSheet) {
+                const activeSheet = grid.getActiveSheet();
+                activeSheetIndex = data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+              } else {
+                // Fallback: try to get from internal state
+                activeSheetIndex = (grid as any).currentSheetIndex || 0;
+              }
+              
+              const activeSheet = data[activeSheetIndex];
+              if (activeSheet) {
+                onActiveSheetChange(activeSheet.name || `Sheet${activeSheetIndex + 1}`, activeSheetIndex);
+              }
+            } catch (e) {
+              console.warn("Error tracking active sheet:", e);
+            }
+          };
+          
+          // Listen for sheet changes - try multiple event names
+          grid.on && grid.on("sheet-changed", notifyActiveSheetChange);
+          grid.on && grid.on("sheet-activated", notifyActiveSheetChange);
+          grid.on && grid.on("sheet-switch", notifyActiveSheetChange);
+          grid.on && grid.on("sheet-select", notifyActiveSheetChange);
+          
+          // Also listen for tab clicks
+          const iframeDoc = iframe.contentDocument!;
+          const tabContainer = iframeDoc.querySelector('.x-spreadsheet-tab');
+          if (tabContainer) {
+            tabContainer.addEventListener('click', notifyActiveSheetChange);
+          }
+          
+          // Initial active sheet notification
+          setTimeout(notifyActiveSheetChange, 100);
+          setTimeout(notifyActiveSheetChange, 500); // Second attempt after full load
 
           // observe iframe size and keep grid attributes + resize in-sync
           const ro = new ResizeObserver(() => {
@@ -256,6 +304,48 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
         getData: () => {
           const win = iframeRef.current?.contentWindow as any;
           return (win && win.__grid && win.__grid.getData()) || [];
+        },
+        getActiveSheetIndex: () => {
+          const win = iframeRef.current?.contentWindow as any;
+          if (win && win.__grid) {
+            const grid = win.__grid;
+            // Try different methods to get active sheet index
+            if (grid.getActiveSheetIndex) {
+              return grid.getActiveSheetIndex();
+            } else if (grid.getCurrentSheetIndex) {
+              return grid.getCurrentSheetIndex();
+            } else if (grid.getActiveSheet) {
+              const data = grid.getData();
+              const activeSheet = grid.getActiveSheet();
+              return data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+            } else {
+              return (grid as any).currentSheetIndex || 0;
+            }
+          }
+          return 0;
+        },
+        getActiveSheet: () => {
+          const win = iframeRef.current?.contentWindow as any;
+          if (win && win.__grid) {
+            const grid = win.__grid;
+            const data = grid.getData();
+            let activeIndex = 0;
+            
+            // Try different methods to get active sheet index
+            if (grid.getActiveSheetIndex) {
+              activeIndex = grid.getActiveSheetIndex();
+            } else if (grid.getCurrentSheetIndex) {
+              activeIndex = grid.getCurrentSheetIndex();
+            } else if (grid.getActiveSheet) {
+              const activeSheet = grid.getActiveSheet();
+              activeIndex = data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+            } else {
+              activeIndex = (grid as any).currentSheetIndex || 0;
+            }
+            
+            return data[activeIndex] || null;
+          }
+          return null;
         },
       }),
       [updateSpreadsheetData, spreadsheetId]

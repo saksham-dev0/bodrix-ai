@@ -6,6 +6,7 @@ import { api } from "../../../../../../convex/_generated/api";
 import { Id } from "../../../../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ChartJSFromRange from "@/components/ChartJSFromRange";
 import {
   ArrowLeft,
@@ -51,6 +52,9 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   const [newChartRange, setNewChartRange] = useState("A1:B6");
   const [newChartType, setNewChartType] = useState<"line" | "bar" | "area" | "pie">("line");
   const [newChartTitle, setNewChartTitle] = useState("My Chart");
+  const [selectedSheetName, setSelectedSheetName] = useState("Sheet1");
+  const [activeSheetIndex, setActiveSheetIndex] = useState(0);
+  const [activeSheetName, setActiveSheetName] = useState("Sheet1");
 
   const spreadsheetEngineRef = useRef<SheetRef>(null);
 
@@ -140,6 +144,14 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   const handleDataChange = useCallback((data: any[]) => {
     setSheetDataCache(data);
     setHasChanges(true);
+  }, []);
+
+  const handleActiveSheetChange = useCallback((sheetName: string, sheetIndex: number) => {
+    console.log("Active sheet changed:", { sheetName, sheetIndex });
+    setActiveSheetName(sheetName);
+    setActiveSheetIndex(sheetIndex);
+    // Update selected sheet name when active sheet changes
+    setSelectedSheetName(sheetName);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -336,6 +348,21 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
                 <span className="hidden lg:inline">Save</span>
               </Button>
               <div className="h-7 w-px bg-border mx-0.5" />
+              <Select value={selectedSheetName} onValueChange={setSelectedSheetName}>
+                <SelectTrigger className="h-7 w-20 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(sheetDataCache || 
+                    spreadsheetEngineRef.current?.getData() || 
+                    (spreadsheetDoc?.data ? JSON.parse(spreadsheetDoc.data) : [])
+                  ).map((sheet: any, index: number) => (
+                    <SelectItem key={index} value={sheet.name || `Sheet${index + 1}`}>
+                      {sheet.name || `Sheet${index + 1}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 value={newChartRange}
                 onChange={(e) => setNewChartRange(e.target.value)}
@@ -369,6 +396,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
                       title: newChartTitle || "Chart",
                       type: newChartType,
                       range: newChartRange,
+                      sheetName: selectedSheetName,
                     });
                     toast.success("Chart added");
                   } catch (e) {
@@ -391,6 +419,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
           spreadsheetId={spreadsheetId}
           refreshTrigger={refreshTrigger}
           onSelectionChange={(a1) => setNewChartRange(a1)}
+          onActiveSheetChange={handleActiveSheetChange}
         />
       </div>
 
@@ -421,6 +450,8 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
                   range={c.range}
                   type={c.type as any}
                   title={c.title}
+                  showSheetName={true}
+                  sheetName={c.sheetName || "Sheet1"}
                 />
               </div>
             ))}

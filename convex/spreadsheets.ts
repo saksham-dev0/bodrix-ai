@@ -448,18 +448,19 @@ export const listCharts = query({
         v.literal("line"),
         v.literal("bar"),
         v.literal("area"),
-        v.literal("pie")
+        v.literal("pie"),
       ),
       range: v.string(),
+      sheetName: v.optional(v.string()),
       options: v.optional(
         v.object({
           xIsFirstRowHeader: v.optional(v.boolean()),
           xIsFirstColumn: v.optional(v.boolean()),
-        })
+        }),
       ),
       createdAt: v.number(),
       updatedAt: v.number(),
-    })
+    }),
   ),
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -478,7 +479,9 @@ export const listCharts = query({
 
     return await ctx.db
       .query("charts")
-      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .withIndex("by_spreadsheet", (q) =>
+        q.eq("spreadsheetId", args.spreadsheetId),
+      )
       .order("asc")
       .collect();
   },
@@ -492,14 +495,15 @@ export const createChart = mutation({
       v.literal("line"),
       v.literal("bar"),
       v.literal("area"),
-      v.literal("pie")
+      v.literal("pie"),
     ),
     range: v.string(),
+    sheetName: v.optional(v.string()),
     options: v.optional(
       v.object({
         xIsFirstRowHeader: v.optional(v.boolean()),
         xIsFirstColumn: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   returns: v.id("charts"),
@@ -525,6 +529,7 @@ export const createChart = mutation({
       title: args.title,
       type: args.type,
       range: args.range,
+      sheetName: args.sheetName,
       options: args.options,
       createdAt: now,
       updatedAt: now,
@@ -537,14 +542,19 @@ export const updateChart = mutation({
     chartId: v.id("charts"),
     title: v.optional(v.string()),
     type: v.optional(
-      v.union(v.literal("line"), v.literal("bar"), v.literal("area"), v.literal("pie"))
+      v.union(
+        v.literal("line"),
+        v.literal("bar"),
+        v.literal("area"),
+        v.literal("pie"),
+      ),
     ),
     range: v.optional(v.string()),
     options: v.optional(
       v.object({
         xIsFirstRowHeader: v.optional(v.boolean()),
         xIsFirstColumn: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   returns: v.null(),
