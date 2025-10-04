@@ -9,7 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.22",
+    "@ai-sdk/google": "^2.0.17",
+    "@ai-sdk/mistral": "^2.0.17",
+    "@ai-sdk/openai": "^2.0.42",
     "@clerk/nextjs": "^6.32.0",
+    "@convex-dev/agent": "^0.2.10",
     "@handsontable/react-wrapper": "^16.1.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -38,6 +43,7 @@
     "@radix-ui/react-toggle": "^1.1.10",
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "ai": "^5.0.59",
     "chart.js": "^4.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -52,11 +58,13 @@
     "luckysheet": "^2.1.13",
     "next": "15.5.3",
     "next-themes": "^0.4.6",
+    "openai": "^4.20.0",
     "react": "19.1.0",
     "react-chartjs-2": "^5.3.0",
     "react-day-picker": "^9.10.0",
     "react-dom": "19.1.0",
     "react-hook-form": "^7.62.0",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^3.0.6",
     "react-spreadsheet": "^0.10.1",
     "sonner": "^2.0.7",
@@ -64,7 +72,7 @@
     "vaul": "^1.1.2",
     "x-data-spreadsheet": "^1.1.9",
     "xlsx": "^0.18.5",
-    "zod": "^4.1.8"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

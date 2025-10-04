@@ -48,7 +48,7 @@ export default defineSchema({
       v.literal("line"),
       v.literal("bar"),
       v.literal("area"),
-      v.literal("pie")
+      v.literal("pie"),
     ),
     range: v.string(), // e.g. "A1:C10"
     sheetName: v.optional(v.string()), // Name of the sheet to use for chart data
@@ -56,11 +56,87 @@ export default defineSchema({
       v.object({
         xIsFirstRowHeader: v.optional(v.boolean()),
         xIsFirstColumn: v.optional(v.boolean()),
-      })
+      }),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_spreadsheet", ["spreadsheetId"]) 
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_owner", ["ownerId"]),
+
+  // AI Chat Conversations
+  aiConversations: defineTable({
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    title: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_owner", ["ownerId"]),
+
+  // AI Chat Messages
+  aiMessages: defineTable({
+    conversationId: v.id("aiConversations"),
+    ownerId: v.id("users"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+    // For AI responses that include charts
+    chartData: v.optional(
+      v.object({
+        type: v.union(
+          v.literal("line"),
+          v.literal("bar"),
+          v.literal("area"),
+          v.literal("pie"),
+        ),
+        range: v.string(),
+        sheetName: v.optional(v.string()),
+        title: v.optional(v.string()),
+      }),
+    ),
+    // Agent and LLM information
+    agentId: v.optional(v.string()),
+    modelName: v.optional(v.string()),
+    provider: v.optional(v.string()), // "openai", "anthropic", "google", "mistral"
+    // Streaming support
+    isStreaming: v.optional(v.boolean()), // true if message is currently being streamed
+    isComplete: v.optional(v.boolean()), // true if streaming is complete
+    createdAt: v.number(),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_owner", ["ownerId"]),
+
+  // AI Agent Configurations
+  aiAgents: defineTable({
+    name: v.string(),
+    description: v.optional(v.string()),
+    provider: v.union(
+      v.literal("openai"),
+      v.literal("anthropic"),
+      v.literal("google"),
+      v.literal("mistral"),
+    ),
+    modelName: v.string(),
+    systemPrompt: v.string(),
+    isActive: v.boolean(),
+    ownerId: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_provider", ["provider"]),
+
+  // AI Threads for agent conversations
+  aiThreads: defineTable({
+    conversationId: v.id("aiConversations"),
+    agentId: v.string(),
+    threadId: v.string(), // External thread ID from agent
+    ownerId: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_agent", ["agentId"])
     .index("by_owner", ["ownerId"]),
 });

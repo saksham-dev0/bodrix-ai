@@ -33,10 +33,21 @@ const CDN_CSS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.css";
 const CDN_JS = "https://unpkg.com/x-data-spreadsheet/dist/xspreadsheet.js";
 
 export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
-  ({ spreadsheetId, onDataChange, refreshTrigger, onSelectionChange, onActiveSheetChange }, ref) => {
+  (
+    {
+      spreadsheetId,
+      onDataChange,
+      refreshTrigger,
+      onSelectionChange,
+      onActiveSheetChange,
+    },
+    ref,
+  ) => {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const initDoneRef = useRef(false);
-    const updateSpreadsheetData = useMutation(api.spreadsheets.updateSpreadsheetData);
+    const updateSpreadsheetData = useMutation(
+      api.spreadsheets.updateSpreadsheetData,
+    );
     const spreadsheetData = useQuery(api.spreadsheets.getSpreadsheetData, {
       spreadsheetId,
     });
@@ -68,8 +79,14 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           const doc = iframe.contentDocument!;
           const root = doc.getElementById("sheetRoot")!;
           // set explicit numeric attributes (docs example uses height/width attrs)
-          root.setAttribute("width", String(root.clientWidth || iframe.clientWidth || 800));
-          root.setAttribute("height", String(root.clientHeight || iframe.clientHeight || 600));
+          root.setAttribute(
+            "width",
+            String(root.clientWidth || iframe.clientWidth || 800),
+          );
+          root.setAttribute(
+            "height",
+            String(root.clientHeight || iframe.clientHeight || 600),
+          );
 
           // initialize via the documented one-liner
           const x_spreadsheet = win.x_spreadsheet;
@@ -108,10 +125,84 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
               if (onDataChange) onDataChange(d, false);
             } catch (e) {}
           };
-          grid.on && grid.on("cell-edited", pushChangeToParent);
-          grid.on && grid.on("cell-changed", pushChangeToParent);
-          grid.on && grid.on("sheet-changed", pushChangeToParent);
-          grid.on && grid.on("finished-editing", pushChangeToParent);
+
+          // Handle deletions specifically
+          const handleDeletion = () => {
+            try {
+              const d = grid.getData();
+              if (onDataChange) onDataChange(d, false);
+              console.log("Deletion detected, data updated");
+            } catch (e) {
+              console.error("Error handling deletion:", e);
+            }
+          };
+
+          // Handle sheet-specific deletions
+          const handleSheetDeletion = () => {
+            try {
+              const d = grid.getData();
+              if (onDataChange) onDataChange(d, false);
+              console.log("Sheet deletion detected, data updated");
+            } catch (e) {
+              console.error("Error handling sheet deletion:", e);
+            }
+          };
+
+          // Comprehensive data change handler
+          const handleAnyDataChange = () => {
+            try {
+              const d = grid.getData();
+              if (onDataChange) onDataChange(d, false);
+              console.log("Data change detected, triggering save");
+            } catch (e) {
+              console.error("Error handling data change:", e);
+            }
+          };
+
+          // Store previous data for comparison
+          let previousData: any = null;
+          const checkForDataChanges = () => {
+            try {
+              const currentData = grid.getData();
+              const currentDataString = JSON.stringify(currentData);
+              const previousDataString = JSON.stringify(previousData);
+
+              if (previousDataString !== currentDataString) {
+                console.log("Data change detected via periodic check");
+                if (onDataChange) onDataChange(currentData, false);
+                previousData = currentData;
+              }
+            } catch (e) {
+              console.error("Error in periodic data check:", e);
+            }
+          };
+
+          // Set up periodic check for data changes (every 2 seconds)
+          const intervalId = setInterval(checkForDataChanges, 2000);
+
+          // Initialize previous data
+          previousData = grid.getData();
+
+          // Store interval ID for cleanup
+          (grid as any).__intervalId = intervalId;
+          // Add comprehensive event listeners
+          grid.on && grid.on("cell-edited", handleAnyDataChange);
+          grid.on && grid.on("cell-changed", handleAnyDataChange);
+          grid.on && grid.on("sheet-changed", handleAnyDataChange);
+          grid.on && grid.on("finished-editing", handleAnyDataChange);
+          grid.on && grid.on("cell-deleted", handleAnyDataChange);
+          grid.on && grid.on("range-deleted", handleAnyDataChange);
+          grid.on && grid.on("row-deleted", handleAnyDataChange);
+          grid.on && grid.on("col-deleted", handleAnyDataChange);
+          grid.on && grid.on("delete", handleAnyDataChange);
+          grid.on && grid.on("clear", handleAnyDataChange);
+          grid.on && grid.on("sheet-deleted", handleAnyDataChange);
+          grid.on && grid.on("sheet-removed", handleAnyDataChange);
+          grid.on && grid.on("sheet-added", handleAnyDataChange);
+          grid.on && grid.on("sheet-renamed", handleAnyDataChange);
+          grid.on && grid.on("sheet-switched", handleAnyDataChange);
+          grid.on && grid.on("data-changed", handleAnyDataChange);
+          grid.on && grid.on("content-changed", handleAnyDataChange);
 
           // selection change -> notify parent with A1 range
           const notifySelection = (...args: any[]) => {
@@ -120,12 +211,20 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
               // x-spreadsheet emits either (cell, ri, ci) for single or (cell, selection) for range
               // selection can be { sri, sci, eri, eci }
               let sri: number, sci: number, eri: number, eci: number;
-              if (args.length >= 3 && typeof args[1] === "number" && typeof args[2] === "number") {
+              if (
+                args.length >= 3 &&
+                typeof args[1] === "number" &&
+                typeof args[2] === "number"
+              ) {
                 sri = args[1];
                 sci = args[2];
                 eri = sri;
                 eci = sci;
-              } else if (args.length >= 2 && args[1] && typeof args[1] === "object") {
+              } else if (
+                args.length >= 2 &&
+                args[1] &&
+                typeof args[1] === "object"
+              ) {
                 const sel = args[1];
                 sri = sel.sri ?? sel.ri ?? 0;
                 sci = sel.sci ?? sel.ci ?? 0;
@@ -158,34 +257,39 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
                 activeSheetIndex = grid.getCurrentSheetIndex();
               } else if (grid.getActiveSheet) {
                 const activeSheet = grid.getActiveSheet();
-                activeSheetIndex = data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+                activeSheetIndex = data.findIndex(
+                  (sheet: any) => sheet.name === activeSheet.name,
+                );
               } else {
                 // Fallback: try to get from internal state
                 activeSheetIndex = (grid as any).currentSheetIndex || 0;
               }
-              
+
               const activeSheet = data[activeSheetIndex];
               if (activeSheet) {
-                onActiveSheetChange(activeSheet.name || `Sheet${activeSheetIndex + 1}`, activeSheetIndex);
+                onActiveSheetChange(
+                  activeSheet.name || `Sheet${activeSheetIndex + 1}`,
+                  activeSheetIndex,
+                );
               }
             } catch (e) {
               console.warn("Error tracking active sheet:", e);
             }
           };
-          
+
           // Listen for sheet changes - try multiple event names
           grid.on && grid.on("sheet-changed", notifyActiveSheetChange);
           grid.on && grid.on("sheet-activated", notifyActiveSheetChange);
           grid.on && grid.on("sheet-switch", notifyActiveSheetChange);
           grid.on && grid.on("sheet-select", notifyActiveSheetChange);
-          
+
           // Also listen for tab clicks
           const iframeDoc = iframe.contentDocument!;
-          const tabContainer = iframeDoc.querySelector('.x-spreadsheet-tab');
+          const tabContainer = iframeDoc.querySelector(".x-spreadsheet-tab");
           if (tabContainer) {
-            tabContainer.addEventListener('click', notifyActiveSheetChange);
+            tabContainer.addEventListener("click", notifyActiveSheetChange);
           }
-          
+
           // Initial active sheet notification
           setTimeout(notifyActiveSheetChange, 100);
           setTimeout(notifyActiveSheetChange, 500); // Second attempt after full load
@@ -194,8 +298,14 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           const ro = new ResizeObserver(() => {
             try {
               // update root attrs & call resize (x-spreadsheet reads attrs or uses resize)
-              root.setAttribute("width", String(root.clientWidth || iframe.clientWidth));
-              root.setAttribute("height", String(root.clientHeight || iframe.clientHeight));
+              root.setAttribute(
+                "width",
+                String(root.clientWidth || iframe.clientWidth),
+              );
+              root.setAttribute(
+                "height",
+                String(root.clientHeight || iframe.clientHeight),
+              );
               grid.resize(root.clientWidth, root.clientHeight);
             } catch (e) {}
           });
@@ -213,7 +323,8 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
       const script = idoc.createElement("script");
       script.src = CDN_JS;
       script.onload = onLibLoad;
-      script.onerror = () => console.error("Failed to load x-spreadsheet inside iframe");
+      script.onerror = () =>
+        console.error("Failed to load x-spreadsheet inside iframe");
       idoc.head.appendChild(script);
 
       return () => {
@@ -244,7 +355,10 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           // ensure correct layout after loading
           setTimeout(() => {
             try {
-              const root = iframeRef.current!.contentDocument!.getElementById("sheetRoot")!;
+              const root =
+                iframeRef.current!.contentDocument!.getElementById(
+                  "sheetRoot",
+                )!;
               win.__grid.resize(root.clientWidth, root.clientHeight);
             } catch (e) {}
           }, 80);
@@ -253,6 +367,16 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
         console.warn("Failed to parse/load spreadsheet data into iframe", e);
       }
     }, [spreadsheetData, refreshTrigger, initDoneRef.current]);
+
+    // Cleanup interval on unmount
+    useEffect(() => {
+      return () => {
+        const win = iframeRef.current?.contentWindow as any;
+        if (win && win.__grid && (win.__grid as any).__intervalId) {
+          clearInterval((win.__grid as any).__intervalId);
+        }
+      };
+    }, []);
 
     // expose methods
     useImperativeHandle(
@@ -270,7 +394,9 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           const win = iframeRef.current?.contentWindow as any;
           if (!win || !win.__grid) return;
           const data = win.__grid.getData();
-          const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+          const blob = new Blob([JSON.stringify(data)], {
+            type: "application/json",
+          });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -292,8 +418,9 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           } as any;
           lines.forEach((row, r) =>
             row.forEach((cell, c) => {
-              if (cell?.trim()) sheet.cells[`${r}_${c}`] = { text: cell.trim(), style: 0 };
-            })
+              if (cell?.trim())
+                sheet.cells[`${r}_${c}`] = { text: cell.trim(), style: 0 };
+            }),
           );
           const win = iframeRef.current?.contentWindow as any;
           if (win && win.__grid) {
@@ -317,7 +444,9 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
             } else if (grid.getActiveSheet) {
               const data = grid.getData();
               const activeSheet = grid.getActiveSheet();
-              return data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+              return data.findIndex(
+                (sheet: any) => sheet.name === activeSheet.name,
+              );
             } else {
               return (grid as any).currentSheetIndex || 0;
             }
@@ -330,7 +459,7 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
             const grid = win.__grid;
             const data = grid.getData();
             let activeIndex = 0;
-            
+
             // Try different methods to get active sheet index
             if (grid.getActiveSheetIndex) {
               activeIndex = grid.getActiveSheetIndex();
@@ -338,21 +467,29 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
               activeIndex = grid.getCurrentSheetIndex();
             } else if (grid.getActiveSheet) {
               const activeSheet = grid.getActiveSheet();
-              activeIndex = data.findIndex((sheet: any) => sheet.name === activeSheet.name);
+              activeIndex = data.findIndex(
+                (sheet: any) => sheet.name === activeSheet.name,
+              );
             } else {
               activeIndex = (grid as any).currentSheetIndex || 0;
             }
-            
+
             return data[activeIndex] || null;
           }
           return null;
         },
       }),
-      [updateSpreadsheetData, spreadsheetId]
+      [updateSpreadsheetData, spreadsheetId],
     );
 
     return (
-      <div style={{ width: "100%", height: "calc(100vh - 120px)", position: "relative" }}>
+      <div
+        style={{
+          width: "100%",
+          height: "calc(100vh - 120px)",
+          position: "relative",
+        }}
+      >
         <iframe
           ref={iframeRef}
           title="x-spreadsheet-iframe"
@@ -360,7 +497,7 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
         />
       </div>
     );
-  }
+  },
 );
 
 SheetXSpreadsheetIframe.displayName = "SheetXSpreadsheetIframe";

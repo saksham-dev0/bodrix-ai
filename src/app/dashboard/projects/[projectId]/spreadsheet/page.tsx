@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ChartJSFromRange from "@/components/ChartJSFromRange";
+import ResizableAISidebar from "@/components/ResizableAISidebar";
 import {
   ArrowLeft,
   Save,
@@ -19,6 +20,7 @@ import {
   Download,
   Upload,
   Trash2,
+  Bot,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -55,6 +57,8 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   const [selectedSheetName, setSelectedSheetName] = useState("Sheet1");
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [activeSheetName, setActiveSheetName] = useState("Sheet1");
+  const [selectedRange, setSelectedRange] = useState<string>("");
+  const [isAISidebarOpen, setIsAISidebarOpen] = useState(false);
 
   const spreadsheetEngineRef = useRef<SheetRef>(null);
 
@@ -152,6 +156,11 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
     setActiveSheetIndex(sheetIndex);
     // Update selected sheet name when active sheet changes
     setSelectedSheetName(sheetName);
+  }, []);
+
+  const handleSelectionChange = useCallback((rangeA1: string) => {
+    setSelectedRange(rangeA1);
+    setNewChartRange(rangeA1);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -255,7 +264,17 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   }
 
   return (
-    <div className="h-full w-full flex flex-col min-w-0">
+    <div className="h-full w-full flex flex-col min-w-0 relative">
+      {/* AI Sidebar */}
+      <ResizableAISidebar
+        spreadsheetId={spreadsheetId}
+        sheetData={sheetDataCache || spreadsheetEngineRef.current?.getData() || []}
+        selectedRange={selectedRange}
+        activeSheetName={activeSheetName}
+        isOpen={isAISidebarOpen}
+        onToggle={() => setIsAISidebarOpen(!isAISidebarOpen)}
+      />
+
       {/* Header */}
       <div className="border-b bg-white flex-shrink-0 w-full min-w-0">
         <div className="px-3 py-2 w-full min-w-0">
@@ -348,6 +367,17 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
                 <span className="hidden lg:inline">Save</span>
               </Button>
               <div className="h-7 w-px bg-border mx-0.5" />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setIsAISidebarOpen(!isAISidebarOpen)}
+                title="Open AI Assistant"
+              >
+                <Bot className="w-3 h-3 mr-1" />
+                <span className="hidden lg:inline">AI</span>
+              </Button>
+              <div className="h-7 w-px bg-border mx-0.5" />
               <Select value={selectedSheetName} onValueChange={setSelectedSheetName}>
                 <SelectTrigger className="h-7 w-20 text-xs">
                   <SelectValue />
@@ -418,7 +448,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
           onDataChange={handleDataChange}
           spreadsheetId={spreadsheetId}
           refreshTrigger={refreshTrigger}
-          onSelectionChange={(a1) => setNewChartRange(a1)}
+          onSelectionChange={handleSelectionChange}
           onActiveSheetChange={handleActiveSheetChange}
         />
       </div>

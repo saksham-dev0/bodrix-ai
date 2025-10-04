@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 
@@ -615,6 +615,160 @@ export const deleteChart = mutation({
 });
 
 /**
+ * Check if a row is truly empty (has no data or only empty cells)
+ */
+function isRowEmpty(row: any): boolean {
+  if (!row || !row.cells) return true;
+  
+  for (const colKey in row.cells) {
+    const cell = row.cells[colKey];
+    // If cell has text that's not empty/whitespace, row is not empty
+    if (cell && cell.text && cell.text.trim() !== "") {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+/**
+ * Find the next truly available row (skipping empty rows)
+ */
+function findNextAvailableRow(sheet: any, startFrom: number = 0): number {
+  if (!sheet.rows) return startFrom;
+  
+  let maxUsedRow = startFrom - 1;
+  
+  // Find the last row that has actual content
+  for (const rowKey in sheet.rows) {
+    if (rowKey === "len") continue;
+    
+    const rowNum = parseInt(rowKey);
+    if (!isRowEmpty(sheet.rows[rowKey])) {
+      maxUsedRow = Math.max(maxUsedRow, rowNum);
+    }
+  }
+  
+  return maxUsedRow + 1;
+}
+
+/**
+ * Generate sample data based on column header name
+ */
+function generateSampleData(headerName: string, rowNumber: number): string {
+  const lower = headerName.toLowerCase();
+  
+  // Product related
+  if (lower.includes("product") && (lower.includes("name") || lower.includes("title"))) {
+    const products = ["Laptop", "Smartphone", "Headphones", "Tablet", "Monitor", "Keyboard", "Mouse", "Camera", "Printer", "Speaker"];
+    return products[(rowNumber - 1) % products.length];
+  }
+  if (lower.includes("product") && lower.includes("id")) {
+    return `P${String(rowNumber).padStart(3, '0')}`;
+  }
+  
+  // Price related
+  if (lower.includes("price") || lower.includes("cost") || lower.includes("amount")) {
+    const prices = [29.99, 49.99, 99.99, 149.99, 199.99, 299.99, 399.99, 499.99];
+    return prices[(rowNumber - 1) % prices.length].toString();
+  }
+  
+  // Quantity/Stock related
+  if (lower.includes("quantity") || lower.includes("stock") || lower.includes("qty")) {
+    const quantities = [10, 25, 50, 75, 100, 150, 200, 300];
+    return quantities[(rowNumber - 1) % quantities.length].toString();
+  }
+  
+  // Category related
+  if (lower.includes("category") || lower.includes("type")) {
+    const categories = ["Electronics", "Accessories", "Software", "Hardware", "Gaming", "Audio", "Video", "Peripherals"];
+    return categories[(rowNumber - 1) % categories.length];
+  }
+  
+  // Name related (person names)
+  if (lower === "name" || lower.includes("person") || lower.includes("employee") || lower.includes("customer")) {
+    const names = ["John Smith", "Jane Doe", "Mike Johnson", "Sarah Williams", "David Brown", "Emily Davis", "Chris Wilson", "Lisa Anderson", "Tom Martin", "Anna Taylor"];
+    return names[(rowNumber - 1) % names.length];
+  }
+  
+  // Email related
+  if (lower.includes("email") || lower.includes("mail")) {
+    const names = ["john", "jane", "mike", "sarah", "david", "emily", "chris", "lisa", "tom", "anna"];
+    return `${names[(rowNumber - 1) % names.length]}@example.com`;
+  }
+  
+  // Phone related
+  if (lower.includes("phone") || lower.includes("mobile") || lower.includes("contact")) {
+    return `+1 (555) ${String(100 + rowNumber).slice(-3)}-${String(1000 + rowNumber).slice(-4)}`;
+  }
+  
+  // Date related
+  if (lower.includes("date") || lower.includes("time")) {
+    const date = new Date(2024, 0, rowNumber);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // Address related
+  if (lower.includes("address") || lower.includes("street")) {
+    return `${100 + rowNumber * 10} Main Street`;
+  }
+  
+  // City related
+  if (lower.includes("city")) {
+    const cities = ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego"];
+    return cities[(rowNumber - 1) % cities.length];
+  }
+  
+  // Status related
+  if (lower.includes("status")) {
+    const statuses = ["Active", "Pending", "Completed", "In Progress", "On Hold"];
+    return statuses[(rowNumber - 1) % statuses.length];
+  }
+  
+  // ID related
+  if (lower.includes("id") || lower === "id") {
+    return String(1000 + rowNumber);
+  }
+  
+  // Age related
+  if (lower.includes("age")) {
+    return String(20 + (rowNumber % 40));
+  }
+  
+  // Salary related
+  if (lower.includes("salary") || lower.includes("income")) {
+    const salaries = [45000, 55000, 65000, 75000, 85000, 95000, 105000, 125000];
+    return salaries[(rowNumber - 1) % salaries.length].toString();
+  }
+  
+  // Position/Role related
+  if (lower.includes("position") || lower.includes("role") || lower.includes("title") || lower.includes("job")) {
+    const positions = ["Manager", "Developer", "Designer", "Analyst", "Engineer", "Specialist", "Coordinator", "Director"];
+    return positions[(rowNumber - 1) % positions.length];
+  }
+  
+  // Department related
+  if (lower.includes("department") || lower.includes("dept")) {
+    const departments = ["Sales", "Marketing", "Engineering", "HR", "Finance", "Operations", "IT", "Support"];
+    return departments[(rowNumber - 1) % departments.length];
+  }
+  
+  // Company related
+  if (lower.includes("company") || lower.includes("organization")) {
+    const companies = ["Acme Corp", "TechStart Inc", "Global Solutions", "Innovation Labs", "Digital Works", "Smart Systems", "Future Tech", "Prime Industries"];
+    return companies[(rowNumber - 1) % companies.length];
+  }
+  
+  // Description related
+  if (lower.includes("description") || lower.includes("desc") || lower.includes("notes")) {
+    return `Sample description ${rowNumber}`;
+  }
+  
+  // Default: generic values
+  return `Value ${rowNumber}`;
+}
+
+/**
  * Helper function to parse a CSV line
  */
 function parseCSVLine(line: string): string[] {
@@ -646,3 +800,379 @@ function parseCSVLine(line: string): string[] {
   result.push(current);
   return result;
 }
+
+/**
+ * Internal mutation to insert test data
+ */
+export const internalInsertTestData = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found");
+    }
+
+    if (spreadsheet.ownerId !== args.ownerId) {
+      throw new Error("Not authorized to edit this spreadsheet");
+    }
+
+    try {
+      const data = JSON.parse(spreadsheet.data || "[]");
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("Invalid spreadsheet data");
+      }
+
+      const sheet = data[0];
+      
+      // Initialize rows if not present
+      if (!sheet.rows) {
+        sheet.rows = { len: 100 };
+      }
+      
+      // Find the next truly available row (skipping empty rows)
+      const nextRow = findNextAvailableRow(sheet, 0);
+
+      // Insert "test" in the first column of the next available row
+      if (!sheet.rows[nextRow]) {
+        sheet.rows[nextRow] = { cells: {} };
+      }
+      if (!sheet.rows[nextRow].cells) {
+        sheet.rows[nextRow].cells = {};
+      }
+      sheet.rows[nextRow].cells["0"] = { text: "test" };
+
+      const newData = JSON.stringify(data);
+      const now = Date.now();
+      await ctx.db.patch(args.spreadsheetId, {
+        data: newData,
+        updatedAt: now,
+      });
+
+      return null;
+    } catch (error) {
+      console.error("Error inserting test data:", error);
+      throw new Error("Failed to insert test data");
+    }
+  },
+});
+
+/**
+ * Internal mutation to create a table with specified headers and rows
+ */
+export const internalCreateTableWithSpec = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    headers: v.array(v.string()),
+    numRows: v.number(),
+    sheetName: v.optional(v.string()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+    sheetName: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found");
+    }
+
+    if (spreadsheet.ownerId !== args.ownerId) {
+      throw new Error("Not authorized to edit this spreadsheet");
+    }
+
+    try {
+      const data = JSON.parse(spreadsheet.data || "[]");
+      if (!Array.isArray(data)) {
+        throw new Error("Invalid spreadsheet data");
+      }
+
+      let targetSheet;
+      let targetSheetName = args.sheetName || "Sheet1";
+      let isNewSheet = false;
+
+      // Find or create the target sheet
+      if (args.sheetName) {
+        targetSheet = data.find(s => s.name === args.sheetName);
+        
+        // If sheet doesn't exist, create it
+        if (!targetSheet) {
+          targetSheet = {
+            name: args.sheetName,
+            freeze: "A1",
+            styles: [],
+            merges: [],
+            rows: { len: Math.max(100, args.numRows + 1) },
+            cols: { len: Math.max(26, args.headers.length) },
+            validations: [],
+            autofilter: {},
+          };
+          data.push(targetSheet);
+          isNewSheet = true;
+        }
+      } else {
+        // Use first sheet if no sheet name specified
+        if (data.length === 0) {
+          targetSheet = {
+            name: "Sheet1",
+            freeze: "A1",
+            styles: [],
+            merges: [],
+            rows: { len: Math.max(100, args.numRows + 1) },
+            cols: { len: Math.max(26, args.headers.length) },
+            validations: [],
+            autofilter: {},
+          };
+          data.push(targetSheet);
+          isNewSheet = true;
+        } else {
+          targetSheet = data[0];
+        }
+      }
+
+      // Initialize rows if not present
+      if (!targetSheet.rows) {
+        targetSheet.rows = { len: Math.max(100, args.numRows + 1) };
+      }
+
+      // Find the next truly available row (skipping empty rows)
+      const startRow = findNextAvailableRow(targetSheet, 0);
+
+      // Create header row
+      if (!targetSheet.rows[startRow]) {
+        targetSheet.rows[startRow] = { cells: {} };
+      }
+      if (!targetSheet.rows[startRow].cells) {
+        targetSheet.rows[startRow].cells = {};
+      }
+
+      args.headers.forEach((header, colIndex) => {
+        targetSheet.rows[startRow].cells[colIndex.toString()] = { text: header };
+      });
+
+      // Create data rows with sample data
+      for (let i = 1; i <= args.numRows; i++) {
+        const rowIndex = startRow + i;
+        if (!targetSheet.rows[rowIndex]) {
+          targetSheet.rows[rowIndex] = { cells: {} };
+        }
+        if (!targetSheet.rows[rowIndex].cells) {
+          targetSheet.rows[rowIndex].cells = {};
+        }
+        
+        // Fill cells with sample data based on header names
+        args.headers.forEach((header, colIndex) => {
+          const sampleValue = generateSampleData(header.toLowerCase(), i);
+          targetSheet.rows[rowIndex].cells[colIndex.toString()] = { text: sampleValue };
+        });
+      }
+
+      // Update cols length if needed
+      if (!targetSheet.cols) {
+        targetSheet.cols = { len: Math.max(26, args.headers.length) };
+      } else {
+        targetSheet.cols.len = Math.max(targetSheet.cols.len || 26, args.headers.length);
+      }
+
+      // Update rows length if needed
+      targetSheet.rows.len = Math.max(targetSheet.rows.len || 100, startRow + args.numRows + 1);
+
+      const newData = JSON.stringify(data);
+      const now = Date.now();
+      await ctx.db.patch(args.spreadsheetId, {
+        data: newData,
+        updatedAt: now,
+      });
+
+      return {
+        success: true,
+        message: `✅ Successfully created a table with headers: ${args.headers.join(", ")} and ${args.numRows} data rows in ${isNewSheet ? "new sheet" : "sheet"} "${targetSheetName}". The table starts at row ${startRow + 1}.`,
+        sheetName: targetSheetName,
+      };
+    } catch (error) {
+      console.error("Error creating table:", error);
+      throw new Error(`Failed to create table: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+});
+
+/**
+ * Internal mutation to calculate column statistics
+ */
+export const internalCalculateColumnStats = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    columnName: v.string(),
+    operation: v.union(
+      v.literal("sum"),
+      v.literal("average"),
+      v.literal("avg"),
+      v.literal("count"),
+      v.literal("min"),
+      v.literal("max")
+    ),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    result: v.union(v.number(), v.string()),
+    operation: v.string(),
+    columnName: v.string(),
+    rowCount: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found");
+    }
+
+    if (spreadsheet.ownerId !== args.ownerId) {
+      throw new Error("Not authorized to edit this spreadsheet");
+    }
+
+    try {
+      const data = JSON.parse(spreadsheet.data || "[]");
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("Invalid spreadsheet data");
+      }
+
+      const sheet = data[0];
+      
+      if (!sheet.rows) {
+        throw new Error("No data in spreadsheet");
+      }
+
+      // Find the column index by header name (supports partial matching)
+      let columnIndex = -1;
+      let headerRow = -1;
+      let foundColumnName = "";
+      
+      for (const rowKey in sheet.rows) {
+        if (rowKey === "len") continue;
+        
+        const rowNum = parseInt(rowKey);
+        const row = sheet.rows[rowKey];
+        
+        if (row.cells) {
+          for (const colKey in row.cells) {
+            const cell = row.cells[colKey];
+            if (cell.text) {
+              const cellLower = cell.text.toLowerCase();
+              const searchLower = args.columnName.toLowerCase();
+              
+              // Try exact match first
+              if (cellLower === searchLower) {
+                columnIndex = parseInt(colKey);
+                headerRow = rowNum;
+                foundColumnName = cell.text;
+                break;
+              }
+              // Then try partial match (column contains search term or vice versa)
+              if (columnIndex === -1 && (cellLower.includes(searchLower) || searchLower.includes(cellLower))) {
+                columnIndex = parseInt(colKey);
+                headerRow = rowNum;
+                foundColumnName = cell.text;
+              }
+            }
+          }
+        }
+        
+        if (columnIndex !== -1 && headerRow !== -1) break;
+      }
+
+      if (columnIndex === -1) {
+        throw new Error(`Column "${args.columnName}" not found`);
+      }
+      
+      console.log(`Found column "${foundColumnName}" (index ${columnIndex}) for search term "${args.columnName}"`);
+
+      // Collect values from the column (skip header row)
+      const values: number[] = [];
+      for (const rowKey in sheet.rows) {
+        if (rowKey === "len") continue;
+        
+        const rowNum = parseInt(rowKey);
+        if (rowNum <= headerRow) continue; // Skip header and rows above it
+        
+        const row = sheet.rows[rowKey];
+        if (row.cells && row.cells[columnIndex.toString()]) {
+          const cellText = row.cells[columnIndex.toString()].text;
+          if (cellText && cellText.trim() !== "") {
+            const num = parseFloat(cellText);
+            if (!isNaN(num)) {
+              values.push(num);
+            }
+          }
+        }
+      }
+
+      if (values.length === 0) {
+        throw new Error(`No numeric values found in column "${args.columnName}"`);
+      }
+
+      // Calculate the result based on operation
+      let result: number;
+      let operation = args.operation;
+      
+      if (operation === "avg") operation = "average";
+      
+      switch (operation) {
+        case "sum":
+          result = values.reduce((a, b) => a + b, 0);
+          break;
+        case "average":
+          result = values.reduce((a, b) => a + b, 0) / values.length;
+          break;
+        case "count":
+          result = values.length;
+          break;
+        case "min":
+          result = Math.min(...values);
+          break;
+        case "max":
+          result = Math.max(...values);
+          break;
+        default:
+          throw new Error(`Unknown operation: ${operation}`);
+      }
+
+      // Add the result to the spreadsheet (find next truly available row)
+      const nextRow = findNextAvailableRow(sheet, headerRow + 1);
+
+      if (!sheet.rows[nextRow]) {
+        sheet.rows[nextRow] = { cells: {} };
+      }
+      if (!sheet.rows[nextRow].cells) {
+        sheet.rows[nextRow].cells = {};
+      }
+
+      // Add label in first column (use the actual column name found)
+      sheet.rows[nextRow].cells["0"] = { text: `${operation.toUpperCase()} of ${foundColumnName}:` };
+      // Add result in the column
+      sheet.rows[nextRow].cells[columnIndex.toString()] = { text: result.toString() };
+
+      const newData = JSON.stringify(data);
+      const now = Date.now();
+      await ctx.db.patch(args.spreadsheetId, {
+        data: newData,
+        updatedAt: now,
+      });
+
+      return {
+        success: true,
+        result: result,
+        operation: operation,
+        columnName: foundColumnName, // Return the actual column name that was found
+        rowCount: values.length,
+      };
+    } catch (error) {
+      console.error("Error calculating column stats:", error);
+      throw new Error(`Failed to calculate: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+});
