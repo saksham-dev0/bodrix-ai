@@ -486,25 +486,28 @@ export const generateAgentResponse = internalAction({
         let isFollowUp = false;
         
         // Check if this is a follow-up response about sheet selection
-        const isSheetSelectionResponse = args.userMessage.toLowerCase().includes("new sheet") ||
-          args.userMessage.toLowerCase().includes("sheet1") ||
-          args.userMessage.toLowerCase().includes("sheet26") ||
-          args.userMessage.toLowerCase().includes("existing sheet");
-
-        // Get previous message to check for context
         const previousMessages = conversation.messages;
         let previousHeaders: string[] | undefined;
+        let previousNumRows: number | undefined;
         
-        if (isSheetSelectionResponse && previousMessages.length > 0) {
-          // Look for previous message about table creation
+        if (previousMessages.length > 0) {
+          // Look for previous message asking about sheet selection
           const prevAiMessage = previousMessages[previousMessages.length - 1];
           if (prevAiMessage.role === "assistant" && 
-              prevAiMessage.content.includes("create a table with headers:")) {
-            const headerMatch = prevAiMessage.content.match(/headers:\s*([^.]+)/);
+              prevAiMessage.content.includes("Which sheet would you like to use?")) {
+            // Extract headers from previous message
+            const headerMatch = prevAiMessage.content.match(/headers:\s*\*\*([^*]+)\*\*/);
             if (headerMatch) {
               previousHeaders = headerMatch[1].split(",").map(h => h.trim());
               headers = previousHeaders;
               isFollowUp = true;
+            }
+            
+            // Extract row count from previous message
+            const rowMatch = prevAiMessage.content.match(/\*\*(\d+)\s+rows\*\*/);
+            if (rowMatch) {
+              previousNumRows = parseInt(rowMatch[1]);
+              numRows = previousNumRows;
             }
           }
         }
@@ -573,34 +576,75 @@ export const generateAgentResponse = internalAction({
         // Parse sheet name from the message with improved patterns
         let sheetName: string | undefined = undefined;
         
-        // Try different patterns for sheet names
-        const patterns = [
-          /(?:in|to|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-          /(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-          /(?:sheet|tab)(?:\s+named|\s+called)?\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-        ];
-        
-        for (const pattern of patterns) {
-          const match = args.userMessage.match(pattern);
-          if (match && match[1]) {
-            const name = match[1].trim();
-            if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'table'].includes(name.toLowerCase())) {
-              sheetName = name;
-              break;
+        // If this is a follow-up (user responding to "which sheet" question), be more aggressive with detection
+        if (isFollowUp) {
+          // For follow-ups, look for patterns like "use Sheet1", "Sheet1", "new sheet MyData"
+          const followUpPatterns = [
+            /(?:use|select|choose)\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?/i,  // "use Sheet1"
+            /(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+)["']?/i,  // "create new sheet MyData"
+            /^["']?([A-Za-z][A-Za-z0-9_\-\s]{0,30})["']?$/i,  // Just "Sheet1" or "MyData"
+          ];
+          
+          for (const pattern of followUpPatterns) {
+            const match = args.userMessage.match(pattern);
+            if (match && match[1]) {
+              const name = match[1].trim();
+              if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'table', 'use', 'create', 'make', 'new'].includes(name.toLowerCase())) {
+                sheetName = name;
+                break;
+              }
             }
           }
-        }
-        
-        // Handle follow-up messages for sheet creation
-        if (!sheetName && (args.userMessage.toLowerCase().includes('new sheet') || args.userMessage.toLowerCase().includes('another sheet'))) {
-          sheetName = 'NewSheet';
+          
+          // If still no match, check if message contains "new sheet" without a name
+          if (!sheetName && (args.userMessage.toLowerCase().includes('new sheet') || args.userMessage.toLowerCase().includes('create sheet'))) {
+            sheetName = 'NewSheet';
+          }
+        } else {
+          // For initial requests, use original patterns
+          const patterns = [
+            /(?:in|to|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+            /(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+            /(?:sheet|tab)(?:\s+named|\s+called)?\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+          ];
+          
+          for (const pattern of patterns) {
+            const match = args.userMessage.match(pattern);
+            if (match && match[1]) {
+              const name = match[1].trim();
+              if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'table'].includes(name.toLowerCase())) {
+                sheetName = name;
+                break;
+              }
+            }
+          }
+          
+          // Handle follow-up messages for sheet creation
+          if (!sheetName && (args.userMessage.toLowerCase().includes('new sheet') || args.userMessage.toLowerCase().includes('another sheet'))) {
+            sheetName = 'NewSheet';
+          }
         }
 
-        // Create the table immediately - no clarification needed
+        // Get conversation data
         const convData = await ctx.runQuery(internal.ai.getConversationData, {
           conversationId: args.conversationId,
         });
         if (!convData) throw new Error("Conversation not found");
+
+        // If no sheet name specified, ask user which sheet to use
+        if (!sheetName && !isFollowUp) {
+          const clarificationMessage = `Please provide full information. Write the prompt with specifying the sheet name or specify to create a new sheet.`;
+
+          await ctx.runMutation(internal.ai.saveAIResponse, {
+            conversationId: args.conversationId,
+            content: clarificationMessage,
+            chartData: undefined,
+            agentId: args.agentId,
+            modelName: agent.modelName,
+            provider: agent.provider,
+          });
+          return;
+        }
 
         try {
           console.log("📝 Creating table with headers:", headers, "rows:", numRows, "sheet:", sheetName);
@@ -620,7 +664,7 @@ export const generateAgentResponse = internalAction({
             conversationId: args.conversationId,
             content: tableResult.message,
             chartData: undefined,
-            agentId: args.agentId,
+            agentId: args.agentId,  
             modelName: agent.modelName,
             provider: agent.provider,
           });
@@ -658,7 +702,7 @@ export const generateAgentResponse = internalAction({
         // Try multiple patterns to extract column name
         const patterns = [
           /(?:column|of|for)\s+["']([^"']+)["']/i,  // Quoted: "column 'price in Sheet1'"
-          /(?:column|of|for)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s+column|\s*$|[.!?])/i,  // Multi-word: "sum of price in Sheet1"
+          /(?:column|of|for)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s+(?:in|on|to|at|from)\s|\s+column|\s*$|[.!?])/i,  // Multi-word but stop at location keywords
           /(?:column|of|for)\s+(\w+)/i,  // Single word: "sum of price"
         ];
         
@@ -688,7 +732,7 @@ export const generateAgentResponse = internalAction({
 
         await ctx.runMutation(internal.ai.saveAIResponse, {
           conversationId: args.conversationId,
-          content: `I calculated the ${calcResult.operation} of column '${calcResult.columnName}': ${calcResult.result} (from ${calcResult.rowCount} values). The result has been added to your spreadsheet. ` + result.text,
+          content: `I calculated the ${calcResult.operation} of column '${calcResult.columnName}' in sheet "${calcResult.sheetName}": **${calcResult.result}** (from ${calcResult.rowCount} values). The result has been added to your spreadsheet.`,
           chartData: extractChartData(result.text),
           agentId: args.agentId,
           modelName: agent.modelName,

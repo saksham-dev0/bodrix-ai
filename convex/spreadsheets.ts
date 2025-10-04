@@ -1,4 +1,4 @@
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 
@@ -802,6 +802,34 @@ function parseCSVLine(line: string): string[] {
 }
 
 /**
+ * Internal query to get all sheet names from a spreadsheet
+ */
+export const internalGetSheetNames = internalQuery({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) {
+      return [];
+    }
+
+    try {
+      const data = JSON.parse(spreadsheet.data || "[]");
+      if (!Array.isArray(data)) {
+        return [];
+      }
+
+      return data.map((sheet: any) => sheet.name || "Unnamed");
+    } catch (error) {
+      console.error("Error getting sheet names:", error);
+      return [];
+    }
+  },
+});
+
+/**
  * Internal mutation to insert test data
  */
 export const internalInsertTestData = internalMutation({
@@ -1024,6 +1052,7 @@ export const internalCalculateColumnStats = internalMutation({
     operation: v.string(),
     columnName: v.string(),
     rowCount: v.number(),
+    sheetName: v.string(),
   }),
   handler: async (ctx, args) => {
     const spreadsheet = await ctx.db.get(args.spreadsheetId);
@@ -1041,65 +1070,73 @@ export const internalCalculateColumnStats = internalMutation({
         throw new Error("Invalid spreadsheet data");
       }
 
-      const sheet = data[0];
-      
-      if (!sheet.rows) {
-        throw new Error("No data in spreadsheet");
-      }
-
-      // Find the column index by header name (supports partial matching)
+      // Search for the column in ALL sheets, not just the first one
+      let targetSheet: any = null;
       let columnIndex = -1;
       let headerRow = -1;
       let foundColumnName = "";
+      let sheetName = "";
       
-      for (const rowKey in sheet.rows) {
-        if (rowKey === "len") continue;
+      for (const sheet of data) {
+        if (!sheet.rows) continue;
         
-        const rowNum = parseInt(rowKey);
-        const row = sheet.rows[rowKey];
-        
-        if (row.cells) {
-          for (const colKey in row.cells) {
-            const cell = row.cells[colKey];
-            if (cell.text) {
-              const cellLower = cell.text.toLowerCase();
-              const searchLower = args.columnName.toLowerCase();
-              
-              // Try exact match first
-              if (cellLower === searchLower) {
-                columnIndex = parseInt(colKey);
-                headerRow = rowNum;
-                foundColumnName = cell.text;
-                break;
-              }
-              // Then try partial match (column contains search term or vice versa)
-              if (columnIndex === -1 && (cellLower.includes(searchLower) || searchLower.includes(cellLower))) {
-                columnIndex = parseInt(colKey);
-                headerRow = rowNum;
-                foundColumnName = cell.text;
+        // Try to find the column in this sheet
+        for (const rowKey in sheet.rows) {
+          if (rowKey === "len") continue;
+          
+          const rowNum = parseInt(rowKey);
+          const row = sheet.rows[rowKey];
+          
+          if (row.cells) {
+            for (const colKey in row.cells) {
+              const cell = row.cells[colKey];
+              if (cell.text) {
+                const cellLower = cell.text.toLowerCase();
+                const searchLower = args.columnName.toLowerCase();
+                
+                // Try exact match first
+                if (cellLower === searchLower) {
+                  columnIndex = parseInt(colKey);
+                  headerRow = rowNum;
+                  foundColumnName = cell.text;
+                  targetSheet = sheet;
+                  sheetName = sheet.name || "Unnamed";
+                  break;
+                }
+                // Then try partial match (column contains search term or vice versa)
+                if (columnIndex === -1 && (cellLower.includes(searchLower) || searchLower.includes(cellLower))) {
+                  columnIndex = parseInt(colKey);
+                  headerRow = rowNum;
+                  foundColumnName = cell.text;
+                  targetSheet = sheet;
+                  sheetName = sheet.name || "Unnamed";
+                }
               }
             }
           }
+          
+          if (columnIndex !== -1 && targetSheet !== null) break;
         }
         
-        if (columnIndex !== -1 && headerRow !== -1) break;
+        // If we found the column in this sheet, stop searching other sheets
+        if (columnIndex !== -1 && targetSheet !== null) break;
       }
 
-      if (columnIndex === -1) {
-        throw new Error(`Column "${args.columnName}" not found`);
+      if (columnIndex === -1 || !targetSheet) {
+        throw new Error(`Column "${args.columnName}" not found in any sheet`);
       }
       
-      console.log(`Found column "${foundColumnName}" (index ${columnIndex}) for search term "${args.columnName}"`);
+      console.log(`Found column "${foundColumnName}" (index ${columnIndex}) in sheet "${sheetName}" for search term "${args.columnName}"`);
 
       // Collect values from the column (skip header row)
       const values: number[] = [];
-      for (const rowKey in sheet.rows) {
+      for (const rowKey in targetSheet.rows) {
         if (rowKey === "len") continue;
         
         const rowNum = parseInt(rowKey);
         if (rowNum <= headerRow) continue; // Skip header and rows above it
         
-        const row = sheet.rows[rowKey];
+        const row = targetSheet.rows[rowKey];
         if (row.cells && row.cells[columnIndex.toString()]) {
           const cellText = row.cells[columnIndex.toString()].text;
           if (cellText && cellText.trim() !== "") {
@@ -1142,19 +1179,19 @@ export const internalCalculateColumnStats = internalMutation({
       }
 
       // Add the result to the spreadsheet (find next truly available row)
-      const nextRow = findNextAvailableRow(sheet, headerRow + 1);
+      const nextRow = findNextAvailableRow(targetSheet, headerRow + 1);
 
-      if (!sheet.rows[nextRow]) {
-        sheet.rows[nextRow] = { cells: {} };
+      if (!targetSheet.rows[nextRow]) {
+        targetSheet.rows[nextRow] = { cells: {} };
       }
-      if (!sheet.rows[nextRow].cells) {
-        sheet.rows[nextRow].cells = {};
+      if (!targetSheet.rows[nextRow].cells) {
+        targetSheet.rows[nextRow].cells = {};
       }
 
       // Add label in first column (use the actual column name found)
-      sheet.rows[nextRow].cells["0"] = { text: `${operation.toUpperCase()} of ${foundColumnName}:` };
+      targetSheet.rows[nextRow].cells["0"] = { text: `${operation.toUpperCase()} of ${foundColumnName}:` };
       // Add result in the column
-      sheet.rows[nextRow].cells[columnIndex.toString()] = { text: result.toString() };
+      targetSheet.rows[nextRow].cells[columnIndex.toString()] = { text: result.toString() };
 
       const newData = JSON.stringify(data);
       const now = Date.now();
@@ -1169,6 +1206,7 @@ export const internalCalculateColumnStats = internalMutation({
         operation: operation,
         columnName: foundColumnName, // Return the actual column name that was found
         rowCount: values.length,
+        sheetName: sheetName, // Return the sheet where the column was found
       };
     } catch (error) {
       console.error("Error calculating column stats:", error);

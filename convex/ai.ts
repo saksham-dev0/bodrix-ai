@@ -1051,6 +1051,19 @@ export const generateStreamingAIResponse = internalAction({
           sheetName = 'NewSheet';
         }
 
+        // If no sheet name specified, ask user which sheet to use
+        if (!sheetName) {
+          const clarificationMessage = `Please provide full information. Write the prompt with specifying the sheet name or specify to create a new sheet.`;
+
+          await ctx.runMutation(internal.ai.updateStreamingMessage, {
+            messageId,
+            content: clarificationMessage,
+            isComplete: true,
+          });
+          
+          return null;
+        }
+
         const tableResult = await ctx.runMutation(internal.spreadsheets.internalCreateTableWithSpec, {
           spreadsheetId: conversation.conversation.spreadsheetId,
           ownerId: conversation.conversation.ownerId,
@@ -1097,7 +1110,7 @@ export const generateStreamingAIResponse = internalAction({
         // Try multiple patterns to extract column name
         const patterns = [
           /(?:column|of|for)\s+["']([^"']+)["']/i,  // Quoted: "column 'price in Sheet1'"
-          /(?:column|of|for)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s+column|\s*$|[.!?])/i,  // Multi-word: "sum of price in Sheet1"
+          /(?:column|of|for)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s+(?:in|on|to|at|from)\s|\s+column|\s*$|[.!?])/i,  // Multi-word but stop at location keywords
           /(?:column|of|for)\s+(\w+)/i,  // Single word: "sum of price"
         ];
         
@@ -1119,7 +1132,7 @@ export const generateStreamingAIResponse = internalAction({
         // Update with calculation result
         await ctx.runMutation(internal.ai.updateStreamingMessage, {
           messageId,
-          content: `I calculated the ${calcResult.operation} of column '${calcResult.columnName}': ${calcResult.result} (from ${calcResult.rowCount} values). The result has been added to your spreadsheet.`,
+          content: `I calculated the ${calcResult.operation} of column '${calcResult.columnName}' in sheet "${calcResult.sheetName}": **${calcResult.result}** (from ${calcResult.rowCount} values). The result has been added to your spreadsheet.`,
           isComplete: true,
         });
 
