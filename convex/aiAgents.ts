@@ -684,6 +684,281 @@ export const generateAgentResponse = internalAction({
           });
         }
       } else if (
+        (args.userMessage.toLowerCase().includes("chart") ||
+         args.userMessage.toLowerCase().includes("graph") ||
+         args.userMessage.toLowerCase().includes("visualize") ||
+         args.userMessage.toLowerCase().includes("plot")) &&
+        (args.userMessage.toLowerCase().includes("create") ||
+         args.userMessage.toLowerCase().includes("make") ||
+         args.userMessage.toLowerCase().includes("generate") ||
+         args.userMessage.toLowerCase().includes("show") ||
+         args.userMessage.toLowerCase().includes("bar") ||
+         args.userMessage.toLowerCase().includes("line") ||
+         args.userMessage.toLowerCase().includes("pie"))
+      ) {
+        try {
+          // Extract chart type
+          let chartType: "bar" | "line" | "pie" | "area" = "bar";
+          if (args.userMessage.toLowerCase().includes("line")) chartType = "line";
+          else if (args.userMessage.toLowerCase().includes("pie")) chartType = "pie";
+          else if (args.userMessage.toLowerCase().includes("area")) chartType = "area";
+          else if (args.userMessage.toLowerCase().includes("bar")) chartType = "bar";
+
+          // Extract sheet name
+          let sheetName: string | undefined = undefined;
+          const sheetPatterns = [
+            /(?:in|from|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+            /(?:sheet|tab)(?:\s+named|\s+called)?\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+          ];
+          
+          for (const pattern of sheetPatterns) {
+            const match = args.userMessage.match(pattern);
+            if (match && match[1]) {
+              const name = match[1].trim();
+              if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with'].includes(name.toLowerCase())) {
+                sheetName = name;
+                break;
+              }
+            }
+          }
+
+          // Extract column names from the message
+          // Look for patterns like "of X and Y", "X vs Y", "X and Y columns"
+          let columns: string[] = [];
+          
+          const columnPatterns = [
+            /(?:of|for|with)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)\s+and\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s+(?:in|from|on|column|chart|graph)|\s*$)/i,
+            /(?:columns?|fields?)\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)\s+and\s+([a-zA-Z][a-zA-Z0-9\s_-]+?)(?:\s|$)/i,
+          ];
+
+          for (const pattern of columnPatterns) {
+            const match = args.userMessage.match(pattern);
+            if (match && match[1] && match[2]) {
+              columns = [match[1].trim(), match[2].trim()];
+              break;
+            }
+          }
+
+          if (columns.length === 0) {
+            await ctx.runMutation(internal.ai.saveAIResponse, {
+              conversationId: args.conversationId,
+              content: "Please specify which columns you want to visualize. For example: 'create a bar chart of product name and price in Sheet1'",
+              chartData: undefined,
+              agentId: args.agentId,
+              modelName: agent.modelName,
+              provider: agent.provider,
+            });
+            return;
+          }
+
+          if (!sheetName) {
+            await ctx.runMutation(internal.ai.saveAIResponse, {
+              conversationId: args.conversationId,
+              content: "Please specify which sheet contains the data. For example: 'create a bar chart of product name and price in Sheet1'",
+              chartData: undefined,
+              agentId: args.agentId,
+              modelName: agent.modelName,
+              provider: agent.provider,
+            });
+            return;
+          }
+
+          // Get conversation data
+          const convData = await ctx.runQuery(internal.ai.getConversationData, {
+            conversationId: args.conversationId,
+          });
+          if (!convData) throw new Error("Conversation not found");
+
+          // Get spreadsheet data to find the columns
+          const spreadsheetData = await ctx.runQuery(internal.ai.getSpreadsheetData, {
+            spreadsheetId: convData.conversation.spreadsheetId,
+          });
+
+          if (!spreadsheetData?.data) {
+            throw new Error("No spreadsheet data found");
+          }
+
+          const data = JSON.parse(spreadsheetData.data);
+          
+          // Find the specified sheet
+          const targetSheet = data.find((s: any) => s.name === sheetName);
+          if (!targetSheet) {
+            throw new Error(`Sheet "${sheetName}" not found`);
+          }
+
+          // Helper function to check if a cell text is a calculated row label
+          const isCalculatedLabel = (text: string): boolean => {
+            const lower = text.toLowerCase();
+            return lower.startsWith('sum') || 
+                   lower.startsWith('average') || 
+                   lower.startsWith('avg') ||
+                   lower.startsWith('total') ||
+                   lower.startsWith('count') ||
+                   lower.startsWith('min') ||
+                   lower.startsWith('max') ||
+                   lower.includes('sum of') ||
+                   lower.includes('average of') ||
+                   lower.includes('total of');
+          };
+
+          // Find the columns in the sheet - only search first 10 rows to avoid calculated rows
+          const columnIndices: number[] = [];
+          const foundColumns: string[] = [];
+          let headerRowFound = -1;
+          
+          for (const rowKey in targetSheet.rows) {
+            if (rowKey === "len") continue;
+            
+            const rowNum = parseInt(rowKey);
+            // Only search first 10 rows for headers
+            if (rowNum > 10) break;
+            
+            const row = targetSheet.rows[rowKey];
+            if (!row.cells) continue;
+            
+            // Check if this row might be a header row by looking for column matches
+            const tempColumnIndices: number[] = [];
+            const tempFoundColumns: string[] = [];
+            let hasCalculatedLabel = false;
+            
+            for (const colKey in row.cells) {
+              const cell = row.cells[colKey];
+              if (cell.text) {
+                const cellLower = cell.text.toLowerCase();
+                
+                // Skip this row entirely if it contains calculated labels
+                if (isCalculatedLabel(cell.text)) {
+                  hasCalculatedLabel = true;
+                  break;
+                }
+                
+                // Check if this cell matches any of our column names
+                for (const col of columns) {
+                  const colLower = col.toLowerCase();
+                  if (cellLower === colLower || cellLower.includes(colLower) || colLower.includes(cellLower)) {
+                    const colIndex = parseInt(colKey);
+                    if (!tempColumnIndices.includes(colIndex)) {
+                      tempColumnIndices.push(colIndex);
+                      tempFoundColumns.push(cell.text);
+                    }
+                  }
+                }
+              }
+            }
+            
+            // If we found both columns in this row and it's not a calculated row, use it
+            if (!hasCalculatedLabel && tempColumnIndices.length >= 2) {
+              columnIndices.push(...tempColumnIndices);
+              foundColumns.push(...tempFoundColumns);
+              headerRowFound = rowNum;
+              break;
+            }
+          }
+
+          if (columnIndices.length < 2) {
+            throw new Error(`Could not find columns: ${columns.join(", ")} in sheet "${sheetName}"`);
+          }
+
+          // Now count data rows starting from the row after the header
+          let dataRowCount = 0;
+          
+          for (const rowKey in targetSheet.rows) {
+            if (rowKey === "len") continue;
+            
+            const rowNum = parseInt(rowKey);
+            const row = targetSheet.rows[rowKey];
+            
+            if (!row.cells) continue;
+            
+            // Count data rows after header
+            if (rowNum > headerRowFound) {
+              // Check if this row has data in our columns
+              let hasData = false;
+              let isCalculatedRow = false;
+              
+              // Check if this is a calculated row
+              for (const colIndex of columnIndices) {
+                if (row.cells[colIndex.toString()]?.text) {
+                  const cellText = row.cells[colIndex.toString()].text;
+                  
+                  // Check if this is a calculated row
+                  if (isCalculatedLabel(cellText)) {
+                    isCalculatedRow = true;
+                    break;
+                  }
+                  hasData = true;
+                }
+              }
+              
+              // Only count if has data and is not a calculated row
+              if (hasData && !isCalculatedRow) {
+                dataRowCount++;
+              } else if (isCalculatedRow) {
+                // Stop counting when we hit calculated rows
+                break;
+              }
+            }
+          }
+
+          // Create the range (A1 notation)
+          const startCol = Math.min(...columnIndices);
+          const endCol = Math.max(...columnIndices);
+          const startRow = headerRowFound;
+          const endRow = headerRowFound + dataRowCount;
+          
+          const colToLetter = (col: number) => {
+            let letter = "";
+            while (col >= 0) {
+              letter = String.fromCharCode((col % 26) + 65) + letter;
+              col = Math.floor(col / 26) - 1;
+            }
+            return letter;
+          };
+          
+          const range = `${colToLetter(startCol)}${startRow + 1}:${colToLetter(endCol)}${endRow + 1}`;
+
+          // Create chart data
+          const chartData = {
+            type: chartType,
+            range: range,
+            sheetName: sheetName,
+            title: `${chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart: ${foundColumns.join(" vs ")}`,
+          };
+
+          // Save chart to charts table for persistence
+          await ctx.runMutation(internal.spreadsheets.internalCreateChart, {
+            spreadsheetId: convData.conversation.spreadsheetId,
+            ownerId: convData.conversation.ownerId,
+            title: chartData.title,
+            type: chartType,
+            range: range,
+            sheetName: sheetName,
+          });
+
+          // Save response with chart
+          await ctx.runMutation(internal.ai.saveAIResponse, {
+            conversationId: args.conversationId,
+            content: `I've created a ${chartType} chart showing **${foundColumns.join("** and **")}** from sheet "${sheetName}". The chart displays data from range ${range} with ${dataRowCount} data points.`,
+            chartData,
+            agentId: args.agentId,
+            modelName: agent.modelName,
+            provider: agent.provider,
+          });
+
+          console.log("✅ Chart created successfully");
+        } catch (error) {
+          console.error("❌ Chart creation error:", error);
+          
+          await ctx.runMutation(internal.ai.saveAIResponse, {
+            conversationId: args.conversationId,
+            content: `Failed to create chart: ${error instanceof Error ? error.message : String(error)}. Please make sure the columns and sheet name are correct.`,
+            chartData: undefined,
+            agentId: args.agentId,
+            modelName: agent.modelName,
+            provider: agent.provider,
+          });
+        }
+      } else if (
         args.userMessage.toLowerCase().includes("sum") ||
         args.userMessage.toLowerCase().includes("average") ||
         args.userMessage.toLowerCase().includes("avg") ||

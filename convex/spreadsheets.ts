@@ -537,6 +537,42 @@ export const createChart = mutation({
   },
 });
 
+/**
+ * Internal mutation to create a chart (called by AI)
+ */
+export const internalCreateChart = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    title: v.string(),
+    type: v.union(
+      v.literal("line"),
+      v.literal("bar"),
+      v.literal("area"),
+      v.literal("pie"),
+    ),
+    range: v.string(),
+    sheetName: v.optional(v.string()),
+  },
+  returns: v.id("charts"),
+  handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) throw new Error("Spreadsheet not found");
+
+    const now = Date.now();
+    return await ctx.db.insert("charts", {
+      spreadsheetId: args.spreadsheetId,
+      ownerId: args.ownerId,
+      title: args.title,
+      type: args.type,
+      range: args.range,
+      sheetName: args.sheetName,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 export const updateChart = mutation({
   args: {
     chartId: v.id("charts"),
