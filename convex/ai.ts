@@ -331,12 +331,23 @@ export const generateAIResponse = internalAction({
 
       console.log("Spreadsheet data:", spreadsheetData);
 
+      // Get uploaded documents for this spreadsheet
+      let documents1: any[] = [];
+      try {
+        documents1 = await ctx.runQuery(internal.documents.getConversationDocuments as any, {
+          spreadsheetId: conversation.conversation.spreadsheetId,
+        });
+      } catch (e) {
+        console.log("Documents not available yet, run 'npx convex dev' to regenerate types");
+      }
+
       // Build context for AI
       const context = buildAIContext(
         spreadsheetData,
         args.selectedRange,
         args.activeSheetName,
-        conversation.messages
+        conversation.messages,
+        documents1
       );
 
       console.log("Built context:", context);
@@ -782,15 +793,16 @@ function sheetToMarkdownTable(sheetJson: any): string {
 }
 
 /**
- * Helper function to build AI context with complete spreadsheet data
+ * Helper function to build AI context with complete spreadsheet data and documents
  */
 function buildAIContext(
   spreadsheetData: { name: string; data: string } | null,
   selectedRange?: string,
   activeSheetName?: string,
-  messages: Array<{ role: "user" | "assistant"; content: string }> = []
+  messages: Array<{ role: "user" | "assistant"; content: string }> = [],
+  documents: any[] = []
 ): string {
-  let context = "You are an AI assistant with complete access to the user's spreadsheet data. You can see and analyze ALL data in ALL sheets. When asked about any sheet or data, provide specific analysis based on the actual content shown below. ";
+  let context = "You are an AI assistant with complete access to the user's spreadsheet data and uploaded documents. You can see and analyze ALL data in ALL sheets and document contents. When asked about any sheet, data, document, or analysis, provide specific insights based on the actual content shown below. ";
   
   if (spreadsheetData) {
     context += `\n\nSPREADSHEET: "${spreadsheetData.name}"\n`;
@@ -829,6 +841,38 @@ function buildAIContext(
     context += "\nNo spreadsheet data available.\n";
   }
   
+  // Add uploaded documents context
+  if (documents && documents.length > 0) {
+    context += "\n=== UPLOADED DOCUMENTS ===\n";
+    documents.forEach((doc, idx) => {
+      context += `\n--- DOCUMENT ${idx + 1}: "${doc.fileName}" (${doc.fileType.toUpperCase()}) ---\n`;
+      if (doc.extractedText) {
+        context += `Content:\n${doc.extractedText.substring(0, 5000)}${doc.extractedText.length > 5000 ? '...(truncated)' : ''}\n`;
+      }
+      if (doc.extractedTables) {
+        try {
+          const tables = JSON.parse(doc.extractedTables);
+          if (tables.length > 0) {
+            context += `\nTables found in document:\n`;
+            tables.forEach((table: any, tableIdx: number) => {
+              context += `\nTable ${tableIdx + 1} (Page ${table.page}):\n`;
+              if (table.rows && table.rows.length > 0) {
+                // Display table in markdown format
+                table.rows.forEach((row: string[], rowIdx: number) => {
+                  context += `  ${row.join(" | ")}\n`;
+                });
+              }
+            });
+          }
+        } catch (e) {
+          // Ignore parse error
+        }
+      }
+      context += "\n";
+    });
+    context += "=== END OF UPLOADED DOCUMENTS ===\n";
+  }
+  
   // Add recent conversation context
   if (messages.length > 0) {
     context += "\n=== RECENT CONVERSATION ===\n";
@@ -839,7 +883,16 @@ function buildAIContext(
     context += "=== END CONVERSATION ===\n";
   }
   
-  context += "\nINSTRUCTIONS: You have complete access to all the spreadsheet data shown above. When the user asks about any sheet, data, or analysis, provide specific insights based on the actual content. Be detailed and specific. If they ask 'what's in Sheet1', tell them exactly what data is in that sheet. If they ask for analysis, provide real analysis of the actual data shown.";
+  context += "\nIMPORTANT INSTRUCTIONS: You have complete access to all the spreadsheet data and uploaded documents shown above.\n\n";
+  context += "When the user asks to CREATE A TABLE FROM A DOCUMENT:\n";
+  context += "- DO NOT make up random data or create example tables\n";
+  context += "- The system will AUTOMATICALLY extract the exact table structure from the document\n";
+  context += "- Simply acknowledge the request - the table will be created with the exact headers and data from the document\n";
+  context += "- If there are multiple tables in the document, ALL of them will be created\n\n";
+  context += "For other requests:\n";
+  context += "- Reference specific content from the documents and spreadsheets shown above\n";
+  context += "- Provide detailed analysis based on actual data\n";
+  context += "- Be specific and accurate with column names, values, and sheet names";
   
   return context;
 }
@@ -903,12 +956,23 @@ export const generateStreamingAIResponse = internalAction({
         });
       }
 
+      // Get uploaded documents for this spreadsheet
+      let documents: any[] = [];
+      try {
+        documents = await ctx.runQuery(internal.documents.getConversationDocuments as any, {
+          spreadsheetId: conversation.conversation.spreadsheetId,
+        });
+      } catch (e) {
+        console.log("Documents not available yet, run 'npx convex dev' to regenerate types");
+      }
+
       // Build context for AI
       const context = buildAIContext(
         spreadsheetData,
         args.selectedRange,
         args.activeSheetName,
-        conversation.messages
+        conversation.messages,
+        documents
       );
 
       // Check if user wants to add test data
@@ -937,9 +1001,23 @@ export const generateStreamingAIResponse = internalAction({
         return;
       }
 
-      // Create table intent (streaming fast-path)
+      // IMPORTANT: Check for document table creation FIRST (before general table creation)
+      // This prevents "create table from document" from being treated as a general table creation
       if (
-        // Primary table creation patterns
+        documents.length > 0 &&
+        (args.userMessage.toLowerCase().includes("from") || 
+         args.userMessage.toLowerCase().includes("from the") ||
+         args.userMessage.toLowerCase().includes("in the")) &&
+        (args.userMessage.toLowerCase().includes("document") || 
+         args.userMessage.toLowerCase().includes("pdf") || 
+         args.userMessage.toLowerCase().includes("docx") ||
+         args.userMessage.toLowerCase().includes("file")) &&
+        args.userMessage.toLowerCase().includes("table")
+      ) {
+        // This is a document table request - skip to document table handler below
+        // Don't process as general table creation
+      } else if (
+        // General table creation patterns (only if NOT from document)
         args.userMessage.toLowerCase().includes("create table") ||
         args.userMessage.toLowerCase().includes("make a table") ||
         args.userMessage.toLowerCase().includes("insert table") ||
@@ -1346,6 +1424,144 @@ export const generateStreamingAIResponse = internalAction({
           await ctx.runMutation(internal.ai.updateStreamingMessage, {
             messageId,
             content: `Failed to create chart: ${error instanceof Error ? error.message : String(error)}. Please make sure the columns and sheet name are correct.`,
+            isComplete: true,
+          });
+          
+          return null;
+        }
+      }
+
+      // Check for document table creation requests
+      if (
+        documents.length > 0 &&
+        (args.userMessage.toLowerCase().includes("create table from") ||
+         args.userMessage.toLowerCase().includes("table from document") ||
+         args.userMessage.toLowerCase().includes("table from file") ||
+         args.userMessage.toLowerCase().includes("table from the document") ||
+         args.userMessage.toLowerCase().includes("table from the file") ||
+         args.userMessage.toLowerCase().includes("table in the document") ||
+         args.userMessage.toLowerCase().includes("table in document") ||
+         args.userMessage.toLowerCase().includes("copy table") ||
+         args.userMessage.toLowerCase().includes("extract table") ||
+         args.userMessage.toLowerCase().includes("import table") ||
+         args.userMessage.toLowerCase().includes("add table from") ||
+         (args.userMessage.toLowerCase().includes("create") && 
+          args.userMessage.toLowerCase().includes("table") && 
+          (args.userMessage.toLowerCase().includes("document") || args.userMessage.toLowerCase().includes("pdf") || args.userMessage.toLowerCase().includes("docx"))))
+      ) {
+        const messageId = await ctx.runMutation(internal.ai.createStreamingMessage, {
+          conversationId: args.conversationId,
+          agentId: args.agentId,
+          modelName: agent?.modelName,
+          provider: agent?.provider,
+        });
+
+        try {
+          // Collect all tables from all documents
+          const allTables: Array<{
+            table: any;
+            document: any;
+          }> = [];
+          
+          for (const doc of documents) {
+            if (doc.extractedTables) {
+              try {
+                const tables = JSON.parse(doc.extractedTables);
+                for (const table of tables) {
+                  if (table.rows && table.rows.length > 0) {
+                    allTables.push({ table, document: doc });
+                  }
+                }
+              } catch (e) {
+                console.error("Error parsing tables from document:", e);
+              }
+            }
+          }
+
+          if (allTables.length === 0) {
+            await ctx.runMutation(internal.ai.updateStreamingMessage, {
+              messageId,
+              content: "I couldn't find any tables in the uploaded documents. Please make sure your document contains a properly formatted table with clear rows and columns.",
+              isComplete: true,
+            });
+            return null;
+          }
+
+          // Determine base sheet name
+          let baseSheetName = "DocumentTable";
+          const sheetMatch = args.userMessage.match(/(?:in|to|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i);
+          if (sheetMatch && sheetMatch[1]) {
+            baseSheetName = sheetMatch[1].trim();
+          }
+
+          // Create all tables
+          const results: string[] = [];
+          
+          for (let i = 0; i < allTables.length; i++) {
+            const { table, document } = allTables[i];
+            
+            // Get headers from first row (filter empty cells) and convert to strings
+            const headers = (table.rows[0] || [])
+              .map((h: any) => String(h || ""))
+              .filter((h: string) => h.trim());
+            
+            const dataRows = table.rows.slice(1).map((row: any[]) => {
+              // Convert all values to strings and ensure row length matches headers
+              const stringRow = row.map((cell: any) => String(cell || ""));
+              const filteredRow = stringRow.slice(0, headers.length);
+              while (filteredRow.length < headers.length) {
+                filteredRow.push("");
+              }
+              return filteredRow;
+            });
+
+            if (headers.length === 0) {
+              continue; // Skip tables without headers
+            }
+
+            // Use different sheet names for multiple tables
+            const sheetName = allTables.length > 1 
+              ? `${baseSheetName}_${i + 1}` 
+              : baseSheetName;
+
+            // Create table with actual data from document
+            const result = await ctx.runMutation(internal.spreadsheets.internalCreateTableFromDocument, {
+              spreadsheetId: conversation.conversation.spreadsheetId,
+              ownerId: conversation.conversation.ownerId,
+              headers,
+              dataRows,
+              sheetName,
+            });
+
+            results.push(`Table ${i + 1}: "${sheetName}" with ${headers.length} columns (${headers.join(", ")}) and ${dataRows.length} data rows`);
+          }
+
+          if (results.length === 0) {
+            await ctx.runMutation(internal.ai.updateStreamingMessage, {
+              messageId,
+              content: "I found tables in the documents but couldn't extract valid data from them. Please check the document format.",
+              isComplete: true,
+            });
+            return null;
+          }
+
+          const responseMessage = allTables.length === 1
+            ? `I've successfully created a table from "${allTables[0].document.fileName}" in sheet "${baseSheetName}" with ${(allTables[0].table.rows[0] || []).filter((h: string) => h && h.trim()).length} columns and ${allTables[0].table.rows.length - 1} data rows.\n\nColumns: ${(allTables[0].table.rows[0] || []).filter((h: string) => h && h.trim()).join(", ")}`
+            : `I've successfully created ${allTables.length} tables from your documents:\n\n${results.join("\n")}`;
+
+          await ctx.runMutation(internal.ai.updateStreamingMessage, {
+            messageId,
+            content: responseMessage,
+            isComplete: true,
+          });
+
+          return null;
+        } catch (error) {
+          console.error("Error creating table from document:", error);
+          
+          await ctx.runMutation(internal.ai.updateStreamingMessage, {
+            messageId,
+            content: `Failed to create table from document: ${error instanceof Error ? error.message : String(error)}`,
             isComplete: true,
           });
           

@@ -10,6 +10,7 @@
 
 import type * as ai from "../ai.js";
 import type * as aiAgents from "../aiAgents.js";
+import type * as documents from "../documents.js";
 import type * as http from "../http.js";
 import type * as projects from "../projects.js";
 import type * as spreadsheets from "../spreadsheets.js";
@@ -32,6 +33,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   aiAgents: typeof aiAgents;
+  documents: typeof documents;
   http: typeof http;
   projects: typeof projects;
   spreadsheets: typeof spreadsheets;

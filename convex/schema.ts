@@ -139,4 +139,30 @@ export default defineSchema({
     .index("by_conversation", ["conversationId"])
     .index("by_agent", ["agentId"])
     .index("by_owner", ["ownerId"]),
+
+  // Documents uploaded by users
+  documents: defineTable({
+    spreadsheetId: v.id("spreadsheets"),
+    conversationId: v.optional(v.id("aiConversations")),
+    ownerId: v.id("users"),
+    fileName: v.string(),
+    fileType: v.union(v.literal("pdf"), v.literal("docx")),
+    storageId: v.id("_storage"), // Convex file storage ID
+    extractedText: v.optional(v.string()), // Full text content
+    extractedTables: v.optional(v.string()), // JSON string of tables found
+    pageCount: v.optional(v.number()),
+    processingStatus: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_owner", ["ownerId"])
+    .index("by_status", ["processingStatus"]),
 });

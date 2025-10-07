@@ -15,6 +15,8 @@ import {
   Trash2,
   X,
   Settings,
+  Paperclip,
+  FileText,
 } from "lucide-react";
 import ChartJSFromRange from "./ChartJSFromRange";
 import { toast } from "sonner";
@@ -43,9 +45,11 @@ export default function ResizableAISidebar({
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"aiAgents"> | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Convex queries and mutations
   const conversations = useQuery(api.ai.getConversations, { spreadsheetId });
@@ -54,12 +58,16 @@ export default function ResizableAISidebar({
     currentConversationId ? { conversationId: currentConversationId } : "skip"
   );
   const agents = useQuery(api.aiAgents.getAgents, {});
+  const documents = useQuery(api.documents.listDocuments, { spreadsheetId });
   
   const createConversation = useMutation(api.ai.createConversation);
   const sendMessage = useMutation(api.ai.sendMessage);
   const deleteConversation = useMutation(api.ai.deleteConversation);
   const getSheetData = useQuery(api.ai.getSheetData, { spreadsheetId });
   const getDefaultAgents = useMutation(api.aiAgents.getDefaultAgents);
+  const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
+  const createDocument = useMutation(api.documents.createDocument);
+  const deleteDocument = useMutation(api.documents.deleteDocument);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -147,6 +155,191 @@ export default function ResizableAISidebar({
     } catch (error) {
       console.error("Error deleting conversation:", error);
       toast.error("Failed to delete conversation");
+    }
+  };
+
+  const extractTablesUsingAI = async (text: string): Promise<any[]> => {
+    try {
+      console.log("Calling server API for table extraction...");
+      
+      const response = await fetch("/api/extract-tables", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: text.substring(0, 8000) }),
+      });
+
+      if (!response.ok) {
+        console.error("API error:", response.status);
+        return [];
+      }
+
+      const data = await response.json();
+      console.log("API response:", data);
+      
+      if (data.tables && Array.isArray(data.tables)) {
+        console.log(`AI extracted ${data.tables.length} tables`);
+        return data.tables;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error("Error in AI table extraction:", error);
+      return [];
+    }
+  };
+
+  const extractTextFromPDF = async (file: File): Promise<{ text: string; tables: any[] }> => {
+    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    
+    // Set worker source to match the installed version
+    const pdfjsVersion = pdfjsLib.version || "5.4.296";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.mjs`;
+    
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    let fullText = "";
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .join(" ");
+      
+      fullText += pageText + "\n\n";
+    }
+    
+    // Use AI to extract tables from the full text
+    console.log("Extracting tables using AI...");
+    const aiTables = await extractTablesUsingAI(fullText);
+    
+    return { text: fullText.trim(), tables: aiTables };
+  };
+
+  const extractTextFromDOCX = async (file: File): Promise<{ text: string; tables: any[] }> => {
+    const mammoth = await import("mammoth");
+    const arrayBuffer = await file.arrayBuffer();
+    
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    const text = result.value;
+    
+    // Use AI to extract tables from the text
+    console.log("Extracting tables from DOCX using AI...");
+    const aiTables = await extractTablesUsingAI(text);
+    
+    return { text: text.trim(), tables: aiTables };
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    if (!validTypes.includes(file.type)) {
+      toast.error("Only PDF and DOCX files are supported");
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File size must be less than 10MB");
+      return;
+    }
+
+    setIsUploadingFile(true);
+    try {
+      toast.info("Extracting text from document...");
+      
+      // Extract text and tables from document
+      let extractedText = "";
+      let extractedTables: any[] = [];
+      
+      if (file.type === "application/pdf") {
+        toast.info("Using AI to detect tables in PDF...");
+        const result = await extractTextFromPDF(file);
+        extractedText = result.text;
+        extractedTables = result.tables;
+        console.log(`PDF extraction complete: ${result.text.length} chars, ${result.tables.length} tables found`);
+        result.tables.forEach((table, idx) => {
+          console.log(`Table ${idx + 1}: ${table.rows.length} rows, ${table.rows[0]?.length || 0} columns`);
+          console.log("Sample data:", table.rows[0]);
+        });
+        
+        if (result.tables.length > 0) {
+          toast.success(`Found ${result.tables.length} table(s) in PDF!`);
+        }
+      } else {
+        toast.info("Using AI to detect tables in DOCX...");
+        const result = await extractTextFromDOCX(file);
+        extractedText = result.text;
+        extractedTables = result.tables;
+        console.log(`DOCX extraction complete: ${result.text.length} chars, ${result.tables.length} tables found`);
+        result.tables.forEach((table, idx) => {
+          console.log(`Table ${idx + 1}: ${table.rows.length} rows, ${table.rows[0]?.length || 0} columns`);
+          console.log("Sample data:", table.rows[0]);
+        });
+        
+        if (result.tables.length > 0) {
+          toast.success(`Found ${result.tables.length} table(s) in DOCX!`);
+        }
+      }
+      
+      console.log("Extracted tables:", extractedTables);
+      toast.info("Uploading document...");
+      
+      // Get upload URL
+      const uploadUrl = await generateUploadUrl();
+
+      // Upload file
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error("Failed to upload file");
+      }
+
+      const { storageId } = await uploadResponse.json();
+
+      // Create document record with extracted content
+      await createDocument({
+        spreadsheetId,
+        conversationId: currentConversationId || undefined,
+        fileName: file.name,
+        fileType: file.type === "application/pdf" ? "pdf" : "docx",
+        storageId,
+        extractedText,
+        extractedTables: JSON.stringify(extractedTables),
+      });
+
+      toast.success(`Document "${file.name}" uploaded and processed successfully!`);
+      
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (error) {
+      console.error("Error uploading file:", error);
+      toast.error(`Failed to process document: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsUploadingFile(false);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: Id<"documents">) => {
+    try {
+      await deleteDocument({ documentId });
+      toast.success("Document deleted");
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      toast.error("Failed to delete document");
     }
   };
 
@@ -448,9 +641,54 @@ export default function ResizableAISidebar({
             </div>
           </div>
 
+          {/* Uploaded Documents */}
+          {documents && documents.length > 0 && (
+            <div className="px-4 py-2 border-t bg-gray-50">
+              <div className="text-xs font-medium text-gray-600 mb-2">
+                Uploaded Documents ({documents.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {documents.map((doc: { _id: Id<"documents">; fileName: string }) => (
+                  <div
+                    key={doc._id}
+                    className="flex items-center gap-1 px-2 py-1 bg-white rounded border text-xs"
+                  >
+                    <FileText className="w-3 h-3 text-gray-500" />
+                    <span className="max-w-[120px] truncate" title={doc.fileName}>
+                      {doc.fileName}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteDocument(doc._id)}
+                      className="text-gray-400 hover:text-red-600"
+                      title="Delete document"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Input */}
           <div className="p-4 border-t flex-shrink-0">
             <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploadingFile || !currentConversationId}
+                title="Upload PDF or DOCX"
+              >
+                <Paperclip className={`w-4 h-4 ${isUploadingFile ? 'animate-spin' : ''}`} />
+              </Button>
               <Input
                 ref={inputRef}
                 value={messageInput}

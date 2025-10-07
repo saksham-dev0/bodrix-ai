@@ -1250,3 +1250,110 @@ export const internalCalculateColumnStats = internalMutation({
     }
   },
 });
+
+/**
+ * Create table from document with actual data
+ */
+export const internalCreateTableFromDocument = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    headers: v.array(v.string()),
+    dataRows: v.array(v.array(v.string())),
+    sheetName: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+    rowsCreated: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    try {
+      const spreadsheet = await ctx.db.get(args.spreadsheetId);
+      if (!spreadsheet) throw new Error("Spreadsheet not found");
+
+      const data = spreadsheet.data ? JSON.parse(spreadsheet.data) : [];
+      
+      // Find or create the target sheet
+      let targetSheet = data.find((s: any) => s.name === args.sheetName);
+      
+      if (!targetSheet) {
+        // Create new sheet
+        targetSheet = {
+          name: args.sheetName,
+          freeze: "A1",
+          styles: [],
+          merges: [],
+          rows: {
+            len: 100,
+          },
+          cols: {
+            len: 26,
+          },
+          validations: [],
+          autofilter: {},
+        };
+        data.push(targetSheet);
+      }
+
+      if (!targetSheet.rows) {
+        targetSheet.rows = { len: 100 };
+      }
+
+      // Find next available row
+      const startRow = findNextAvailableRow(targetSheet);
+
+      // Create header row
+      if (!targetSheet.rows[startRow]) {
+        targetSheet.rows[startRow] = { cells: {} };
+      }
+      if (!targetSheet.rows[startRow].cells) {
+        targetSheet.rows[startRow].cells = {};
+      }
+
+      // Add headers
+      args.headers.forEach((header, colIndex) => {
+        targetSheet.rows[startRow].cells[colIndex.toString()] = { text: header };
+      });
+
+      // Add data rows
+      let rowsCreated = 0;
+      args.dataRows.forEach((row, rowIndex) => {
+        const actualRowIndex = startRow + rowIndex + 1;
+        
+        if (!targetSheet.rows[actualRowIndex]) {
+          targetSheet.rows[actualRowIndex] = { cells: {} };
+        }
+        if (!targetSheet.rows[actualRowIndex].cells) {
+          targetSheet.rows[actualRowIndex].cells = {};
+        }
+
+        // Add each cell in the row
+        row.forEach((cell, colIndex) => {
+          if (colIndex < args.headers.length) {
+            targetSheet.rows[actualRowIndex].cells[colIndex.toString()] = { 
+              text: cell || "" 
+            };
+          }
+        });
+
+        rowsCreated++;
+      });
+
+      // Update spreadsheet
+      await ctx.db.patch(args.spreadsheetId, {
+        data: JSON.stringify(data),
+        updatedAt: Date.now(),
+      });
+
+      return {
+        success: true,
+        message: `Successfully created table from document in sheet "${args.sheetName}" with ${args.headers.length} columns and ${rowsCreated} data rows.`,
+        rowsCreated,
+      };
+    } catch (error) {
+      console.error("Error creating table from document:", error);
+      throw new Error(`Failed to create table from document: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+});
