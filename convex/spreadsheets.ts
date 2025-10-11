@@ -1278,14 +1278,15 @@ export const internalCreateTableFromDocument = internalMutation({
       let targetSheet = data.find((s: any) => s.name === args.sheetName);
       
       if (!targetSheet) {
-        // Create new sheet
+        // Create new sheet with dynamic row length based on data
+        const requiredRows = Math.max(args.dataRows.length + 10, 100); // Add buffer of 10 rows
         targetSheet = {
           name: args.sheetName,
           freeze: "A1",
           styles: [],
           merges: [],
           rows: {
-            len: 100,
+            len: requiredRows,
           },
           cols: {
             len: 26,
@@ -1302,6 +1303,13 @@ export const internalCreateTableFromDocument = internalMutation({
 
       // Find next available row
       const startRow = findNextAvailableRow(targetSheet);
+      
+      // Ensure rows.len can accommodate all the data we're about to add
+      const totalRowsNeeded = startRow + args.dataRows.length + 10; // +1 for header, +10 buffer
+      if (targetSheet.rows.len < totalRowsNeeded) {
+        targetSheet.rows.len = totalRowsNeeded;
+        console.log(`📊 Expanding sheet "${args.sheetName}" to ${totalRowsNeeded} rows to fit all data`);
+      }
 
       // Create header row
       if (!targetSheet.rows[startRow]) {
@@ -1345,6 +1353,13 @@ export const internalCreateTableFromDocument = internalMutation({
         data: JSON.stringify(data),
         updatedAt: Date.now(),
       });
+
+      console.log(`✅ Table created successfully:`);
+      console.log(`   Sheet: "${args.sheetName}"`);
+      console.log(`   Headers: ${args.headers.length} columns`);
+      console.log(`   Data rows: ${rowsCreated}`);
+      console.log(`   Sheet capacity: ${targetSheet.rows.len} rows`);
+      console.log(`   Start row: ${startRow}`);
 
       return {
         success: true,

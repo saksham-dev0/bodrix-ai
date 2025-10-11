@@ -161,28 +161,49 @@ export default function ResizableAISidebar({
   const extractTablesUsingAI = async (text: string): Promise<any[]> => {
     try {
       console.log("Calling server API for table extraction...");
+      console.log(`Text length: ${text.length} characters`);
+      
+      // Use full text for complete table extraction (no limit)
+      const textToAnalyze = text;
       
       const response = await fetch("/api/extract-tables", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ text: text.substring(0, 8000) }),
+        body: JSON.stringify({ text: textToAnalyze }),
       });
 
       if (!response.ok) {
         console.error("API error:", response.status);
+        const errorText = await response.text();
+        console.error("Error details:", errorText);
         return [];
       }
 
       const data = await response.json();
-      console.log("API response:", data);
+      console.log("=".repeat(60));
+      console.log("📋 API RESPONSE DETAILS");
+      console.log("=".repeat(60));
+      console.log("Full response:", JSON.stringify(data, null, 2));
+      console.log("Tables array:", data.tables);
+      console.log("Is array:", Array.isArray(data.tables));
+      console.log("Length:", data.tables?.length);
       
       if (data.tables && Array.isArray(data.tables)) {
-        console.log(`AI extracted ${data.tables.length} tables`);
+        console.log(`✅ AI extracted ${data.tables.length} tables`);
+        data.tables.forEach((table: any, idx: number) => {
+          console.log(`  Table ${idx + 1}: ${table.rows?.[0]?.length || 0} columns, ${(table.rows?.length || 1) - 1} data rows`);
+          if (table.rows && table.rows[0]) {
+            console.log(`    Headers: ${table.rows[0].join(", ")}`);
+          }
+        });
+        console.log("=".repeat(60));
         return data.tables;
       }
       
+      console.error("❌ No tables found in API response");
+      console.log("=".repeat(60));
       return [];
     } catch (error) {
       console.error("Error in AI table extraction:", error);
@@ -206,16 +227,74 @@ export default function ResizableAISidebar({
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(" ");
+      // Sort items by position to preserve layout
+      const items = textContent.items as any[];
+      items.sort((a, b) => {
+        // Sort by Y position first (top to bottom), then X position (left to right)
+        const yDiff = Math.abs(a.transform[5] - b.transform[5]);
+        if (yDiff > 5) {
+          return b.transform[5] - a.transform[5]; // Higher Y comes first
+        }
+        return a.transform[4] - b.transform[4]; // Then by X position
+      });
       
-      fullText += pageText + "\n\n";
+      // Group items by line (same Y position)
+      const lines: string[][] = [];
+      let currentLine: any[] = [];
+      let currentY = items[0]?.transform[5];
+      
+      items.forEach((item) => {
+        const itemY = item.transform[5];
+        const yDiff = Math.abs(currentY - itemY);
+        
+        if (yDiff > 5) {
+          // New line detected
+          if (currentLine.length > 0) {
+            lines.push(currentLine.map(i => i.str));
+          }
+          currentLine = [item];
+          currentY = itemY;
+        } else {
+          currentLine.push(item);
+        }
+      });
+      
+      // Add the last line
+      if (currentLine.length > 0) {
+        lines.push(currentLine.map(i => i.str));
+      }
+      
+      // Join lines with proper spacing
+      const pageText = lines
+        .map(line => line.join(" "))
+        .join("\n");
+      
+      fullText += `\n=== PAGE ${i} ===\n${pageText}\n`;
+    }
+    
+    console.log(`PDF text extracted: ${fullText.length} characters from ${pdf.numPages} pages`);
+    console.log("Sample text:", fullText.substring(0, 500));
+    
+    // Debug: Check for table structure
+    const firstPage = fullText.split(/=== PAGE \d+ ===/)[1];
+    if (firstPage) {
+      const lines = firstPage.split('\n').filter(l => l.trim());
+      console.log("🔍 DEBUGGING - First page analysis:");
+      console.log("  First page lines:", lines.length);
+      console.log("  Line 0 (header?):", lines[0]);
+      console.log("  Line 1 (data?):", lines[1]);
+      if (lines[0]) {
+        const headers = lines[0].split(/\s{2,}/);
+        console.log("  Headers found (split by 2+ spaces):", headers);
+        console.log("  Number of columns:", headers.length);
+      }
     }
     
     // Use AI to extract tables from the full text
     console.log("Extracting tables using AI...");
     const aiTables = await extractTablesUsingAI(fullText);
+    
+    console.log(`AI found ${aiTables.length} tables in the PDF`);
     
     return { text: fullText.trim(), tables: aiTables };
   };

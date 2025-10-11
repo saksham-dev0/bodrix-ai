@@ -52,6 +52,184 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
       spreadsheetId,
     });
 
+    // Create paste handler function
+    const handlePaste = async (event: ClipboardEvent) => {
+      try {
+        // Prevent default paste behavior and stop propagation immediately
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+        
+        const win = iframe.contentWindow as any;
+        if (!win || !win.__grid) return;
+        
+        const grid = win.__grid;
+        
+        // Get current data and active sheet index
+        const data = grid.getData();
+        if (!Array.isArray(data)) {
+          console.error('Invalid sheet data:', data);
+          return;
+        }
+
+        // Get active sheet index
+        let activeSheetIndex = 0;
+        if (grid.sheet && typeof grid.sheet.index === 'number') {
+          activeSheetIndex = grid.sheet.index;
+        }
+
+        // Get the active sheet
+        const activeSheet = data[activeSheetIndex];
+        if (!activeSheet) {
+          console.error('Active sheet not found:', { activeSheetIndex, dataLength: data.length });
+          return;
+        }
+
+        // Get clipboard data
+        const clipboardData = event.clipboardData;
+        if (!clipboardData) return;
+
+        // Get text content and parse it
+        const text = clipboardData.getData('text').trim();
+        if (!text) return;
+
+        // Parse the clipboard data into rows and columns
+        const rows = text.split(/[\n\r]+/).map(row => 
+          row.split('\t').map(cell => cell.trim())
+        ).filter(row => row.some(cell => cell.length > 0));
+
+        if (rows.length === 0) return;
+
+        // Get current selection - try multiple ways to access the selector
+        let startRow = 0;
+        let startCol = 0;
+
+        // Get selected cell position - x-spreadsheet stores this in different ways
+        if (grid.selector) {
+          // Method 1: Check for range object with sri/sci
+          if (grid.selector.range) {
+            startRow = grid.selector.range.sri ?? grid.selector.range.start_ri ?? 0;
+            startCol = grid.selector.range.sci ?? grid.selector.range.start_ci ?? 0;
+          } 
+          // Method 2: Check for direct ri/ci properties on selector
+          else if (grid.selector.ri !== undefined && grid.selector.ci !== undefined) {
+            startRow = grid.selector.ri;
+            startCol = grid.selector.ci;
+          }
+        }
+        
+        // Method 3: Try to get from sheet's cell property
+        if (startRow === 0 && startCol === 0 && grid.sheet) {
+          if (grid.sheet.selector) {
+            if (grid.sheet.selector.range) {
+              startRow = grid.sheet.selector.range.sri ?? grid.sheet.selector.range.start_ri ?? 0;
+              startCol = grid.sheet.selector.range.sci ?? grid.sheet.selector.range.start_ci ?? 0;
+            } else if (grid.sheet.selector.ri !== undefined && grid.sheet.selector.ci !== undefined) {
+              startRow = grid.sheet.selector.ri;
+              startCol = grid.sheet.selector.ci;
+            }
+          }
+          // Method 4: Check for cell property on sheet
+          if (startRow === 0 && startCol === 0 && grid.sheet.cell) {
+            startRow = grid.sheet.cell.ri ?? 0;
+            startCol = grid.sheet.cell.ci ?? 0;
+          }
+        }
+
+        // Method 5: Try accessing internal state
+        if (startRow === 0 && startCol === 0) {
+          // Check if there's a selectRange or similar property
+          const selectedCell = grid.selectedCell || grid.activeCell || grid.currentCell;
+          if (selectedCell) {
+            startRow = selectedCell.ri ?? selectedCell.row ?? 0;
+            startCol = selectedCell.ci ?? selectedCell.col ?? 0;
+          }
+        }
+
+        // Debug: Log the selector structure if we're still at 0,0 and it's not intentional
+        if (startRow === 0 && startCol === 0) {
+          console.log('Warning: Could not detect paste position, defaulting to A1');
+          console.log('Grid selector structure:', {
+            selector: grid.selector,
+            sheet: grid.sheet ? {
+              selector: grid.sheet.selector,
+              cell: grid.sheet.cell
+            } : null,
+            selectedCell: grid.selectedCell,
+            activeCell: grid.activeCell,
+            currentCell: grid.currentCell
+          });
+        }
+
+        console.log('Paste position detected:', { startRow, startCol, cell: `${String.fromCharCode(65 + startCol)}${startRow + 1}` });
+
+        // Create a deep copy of the data
+        const updatedData = JSON.parse(JSON.stringify(data));
+        const updatedSheet = updatedData[activeSheetIndex];
+
+        // Initialize rows object if needed
+        if (!updatedSheet.rows) {
+          updatedSheet.rows = { len: 100 };
+        }
+
+        // Update cells with pasted data
+        rows.forEach((row, rowIndex) => {
+          const ri = startRow + rowIndex;
+          
+          // Initialize row if needed
+          if (!updatedSheet.rows[ri]) {
+            updatedSheet.rows[ri] = { cells: {} };
+          }
+          
+          row.forEach((cellValue, colIndex) => {
+            const ci = startCol + colIndex;
+            
+            // Update cell value
+            if (!updatedSheet.rows[ri].cells) {
+              updatedSheet.rows[ri].cells = {};
+            }
+            
+            if (cellValue.trim()) {
+              updatedSheet.rows[ri].cells[ci] = { text: cellValue.trim() };
+            }
+          });
+        });
+
+        // Update sheet dimensions
+        const lastRow = startRow + rows.length;
+        const maxColLength = Math.max(...rows.map(r => r.length));
+        const lastCol = startCol + maxColLength;
+
+        updatedSheet.rows.len = Math.max(updatedSheet.rows.len || 100, lastRow + 1);
+        updatedSheet.cols = updatedSheet.cols || { len: 26 };
+        updatedSheet.cols.len = Math.max(updatedSheet.cols.len || 26, lastCol + 1);
+
+        console.log('Pasting data:', {
+          activeSheet: activeSheet.name,
+          position: `${startRow},${startCol}`,
+          dimensions: `${rows.length}x${maxColLength}`
+        });
+
+        // Update the grid with modified data
+        grid.loadData(updatedData);
+
+        // Ensure we stay on the correct sheet
+        if (grid.sheet) {
+          grid.sheet.index = activeSheetIndex;
+        }
+
+        // Trigger data change event
+        if (onDataChange) {
+          onDataChange(updatedData, false);
+        }
+      } catch (error) {
+        console.error('Error handling paste:', error);
+      }
+    };
+
     // create iframe document and load CSS+JS
     useEffect(() => {
       const iframe = iframeRef.current;
@@ -294,6 +472,10 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           setTimeout(notifyActiveSheetChange, 100);
           setTimeout(notifyActiveSheetChange, 500); // Second attempt after full load
 
+          // Add paste event listener to the iframe document with capture phase to intercept before x-spreadsheet
+          // Use capture: true to ensure our handler runs before x-spreadsheet's handler
+          idoc.addEventListener('paste', handlePaste, true);
+
           // observe iframe size and keep grid attributes + resize in-sync
           const ro = new ResizeObserver(() => {
             try {
@@ -330,10 +512,20 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
       return () => {
         try {
           const win = iframe.contentWindow as any;
+          const idoc = iframe.contentDocument;
+          
+          // Remove paste event listener if document exists (with capture flag matching addEventListener)
+          if (idoc && handlePaste) {
+            idoc.removeEventListener('paste', handlePaste, true);
+          }
+          
+          // Cleanup grid and resize observer
           win?.__grid?.destroy?.();
           const ro = (iframe as any).__sheet_ro;
           ro && ro.disconnect();
-        } catch (e) {}
+        } catch (e) {
+          console.error('Error during cleanup:', e);
+        }
       };
     }, [iframeRef.current]);
 
@@ -404,29 +596,131 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
           a.click();
           URL.revokeObjectURL(url);
         },
-        importFromExcel: async (file: File) => {
-          const text = await file.text();
-          const lines = text.split("\n").map((l) => l.split(","));
-          const sheet = {
-            name: "Imported",
-            freeze: "A1",
-            styles: [],
-            merges: [],
-            cols: { len: Math.max(26, lines[0]?.length || 26) },
-            rows: { len: Math.max(100, lines.length) },
-            cells: {},
-          } as any;
-          lines.forEach((row, r) =>
-            row.forEach((cell, c) => {
-              if (cell?.trim())
-                sheet.cells[`${r}_${c}`] = { text: cell.trim(), style: 0 };
-            }),
-          );
+        importFromExcel: async (files: FileList | File) => {
           const win = iframeRef.current?.contentWindow as any;
-          if (win && win.__grid) {
-            win.__grid.loadData([sheet]);
-            if (onDataChange) onDataChange([sheet], false);
+          if (!win || !win.__grid) return;
+
+          // Get current data and ensure it's an array
+          let currentData = win.__grid.getData();
+          if (!Array.isArray(currentData)) {
+            currentData = [];
           }
+
+          // Convert FileList or single File to array
+          const fileArray = files instanceof FileList ? Array.from(files) : [files];
+          
+          // Process each file
+          for (const file of fileArray) {
+            try {
+              console.log('Processing file:', file.name);
+              
+              // Read and parse the file
+              const text = await file.text();
+              const lines = text.split(/[\n\r]+/).map(line => 
+                line.split(/[,\t]/).map(cell => cell.trim().replace(/^["']|["']$/g, ''))
+              ).filter(row => row.some(cell => cell.length > 0));
+
+              if (lines.length === 0) {
+                console.warn('No data found in file:', file.name);
+                continue;
+              }
+
+              // Find next available sheet number
+              let sheetNumber = 1;
+              const existingSheetNumbers = currentData
+                .map((sheet: { name: string }) => {
+                  const match = sheet.name.match(/^Sheet(\d+)$/);
+                  return match ? parseInt(match[1]) : 0;
+                })
+                .filter((num: number) => !isNaN(num));
+
+              if (existingSheetNumbers.length > 0) {
+                sheetNumber = Math.max(...existingSheetNumbers) + 1;
+              }
+
+              // Create new sheet name
+              const sheetName = `Sheet${sheetNumber}`;
+
+              // Create new sheet with exact structure
+              const newSheet = {
+                name: sheetName,
+                freeze: "A1",
+                styles: [],
+                merges: [],
+                rows: {},
+                cols: { len: Math.max(26, lines[0]?.length || 26) },
+                validations: [],
+                autofilter: {}
+              } as any;
+
+              // Process each row with exact cell structure
+              lines.forEach((row, rowIndex) => {
+                // Initialize row if it doesn't exist
+                if (!newSheet.rows[rowIndex]) {
+                  newSheet.rows[rowIndex] = { cells: {} };
+                }
+
+                // Process each cell in the row
+                row.forEach((cell, colIndex) => {
+                  if (cell && cell.trim()) {
+                    // Add cell with exact structure
+                    newSheet.rows[rowIndex].cells[colIndex] = {
+                      text: cell.trim()
+                    };
+                  }
+                });
+              });
+
+              // Set the length after processing all rows
+              newSheet.rows.len = Math.max(100, lines.length);
+
+              // Create a new array with existing sheets plus new sheet
+              const updatedData = [...currentData, newSheet];
+
+              // Update the grid with all sheets
+              win.__grid.loadData(updatedData);
+              
+              // Store the updated data
+              currentData = updatedData;
+
+              console.log('Added new sheet:', {
+                name: sheetName,
+                rows: lines.length,
+                columns: lines[0]?.length || 0
+              });
+
+              // Switch to the new sheet
+              if (win.__grid.sheet) {
+                win.__grid.sheet.index = currentData.length - 1;
+              }
+
+              // Trigger data change event
+              if (onDataChange) {
+                onDataChange(currentData, false);
+              }
+            } catch (error) {
+              console.error('Error processing file:', file.name, error);
+            }
+          }
+
+          // Final update to ensure all sheets are saved
+          win.__grid.loadData(currentData);
+          
+          // Ensure we're on the last added sheet
+          setTimeout(() => {
+            try {
+              if (win.__grid.sheet) {
+                win.__grid.sheet.index = currentData.length - 1;
+              }
+              
+              // Final data change event
+              if (onDataChange) {
+                onDataChange(currentData, true);
+              }
+            } catch (error) {
+              console.error('Error finalizing sheet update:', error);
+            }
+          }, 100);
         },
         getData: () => {
           const win = iframeRef.current?.contentWindow as any;

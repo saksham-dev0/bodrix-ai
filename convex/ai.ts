@@ -1449,6 +1449,9 @@ export const generateStreamingAIResponse = internalAction({
           args.userMessage.toLowerCase().includes("table") && 
           (args.userMessage.toLowerCase().includes("document") || args.userMessage.toLowerCase().includes("pdf") || args.userMessage.toLowerCase().includes("docx"))))
       ) {
+        console.log("🔍 Document table creation request detected");
+        console.log(`Found ${documents.length} uploaded document(s)`);
+        
         const messageId = await ctx.runMutation(internal.ai.createStreamingMessage, {
           conversationId: args.conversationId,
           agentId: args.agentId,
@@ -1464,35 +1467,114 @@ export const generateStreamingAIResponse = internalAction({
           }> = [];
           
           for (const doc of documents) {
+            console.log(`📄 Checking document: ${doc.fileName}`);
+            console.log(`  - Has extractedTables: ${!!doc.extractedTables}`);
+            console.log(`  - extractedTables length: ${doc.extractedTables?.length || 0}`);
+            
             if (doc.extractedTables) {
               try {
                 const tables = JSON.parse(doc.extractedTables);
-                for (const table of tables) {
-                  if (table.rows && table.rows.length > 0) {
-                    allTables.push({ table, document: doc });
+                console.log(`  - Parsed ${Array.isArray(tables) ? tables.length : 0} table(s)`);
+                
+                if (Array.isArray(tables)) {
+                  for (const table of tables) {
+                    if (table.rows && Array.isArray(table.rows) && table.rows.length > 0) {
+                      console.log(`    ✓ Valid table found: ${table.rows.length} rows, ${table.rows[0]?.length || 0} columns`);
+                      allTables.push({ table, document: doc });
+                    } else {
+                      console.log(`    ✗ Invalid table structure:`, table);
+                    }
                   }
                 }
               } catch (e) {
-                console.error("Error parsing tables from document:", e);
+                console.error(`  ✗ Error parsing tables from ${doc.fileName}:`, e);
               }
+            } else {
+              console.log(`  ℹ️ No extractedTables field in document`);
             }
           }
 
+          console.log(`📊 Total valid tables found: ${allTables.length}`);
+
           if (allTables.length === 0) {
+            // Provide more detailed feedback
+            let errorMessage = "I couldn't find any tables in the uploaded documents.\n\n";
+            errorMessage += "**Possible reasons:**\n";
+            errorMessage += "- The document doesn't contain structured table data\n";
+            errorMessage += "- The tables might be images (not text-based)\n";
+            errorMessage += "- The document format is not supported\n\n";
+            errorMessage += "**What you can try:**\n";
+            errorMessage += "- Make sure your PDF/DOCX has text-based tables (not scanned images)\n";
+            errorMessage += "- Check that the table has clear headers and data rows\n";
+            errorMessage += "- Try a different document format if possible\n\n";
+            
+            // List the documents that were checked
+            if (documents.length > 0) {
+              errorMessage += "**Documents checked:**\n";
+              documents.forEach(doc => {
+                errorMessage += `- ${doc.fileName} (${doc.fileType})\n`;
+              });
+            }
+            
             await ctx.runMutation(internal.ai.updateStreamingMessage, {
               messageId,
-              content: "I couldn't find any tables in the uploaded documents. Please make sure your document contains a properly formatted table with clear rows and columns.",
+              content: errorMessage,
               isComplete: true,
             });
             return null;
           }
 
-          // Determine base sheet name
-          let baseSheetName = "DocumentTable";
-          const sheetMatch = args.userMessage.match(/(?:in|to|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i);
-          if (sheetMatch && sheetMatch[1]) {
-            baseSheetName = sheetMatch[1].trim();
+          // Determine base sheet name with improved logic
+          let baseSheetName: string | undefined = undefined;
+          let explicitSheetSpecified = false;
+          
+          // Check for explicit sheet name in various formats
+          const sheetPatterns = [
+            /(?:in|to|on)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+)["']?(?:\s|$|,|\.)/i,
+            /(?:in|to)\s+["']?([A-Za-z][A-Za-z0-9_\-\s]+)["']?\s+sheet/i,
+          ];
+          
+          for (const pattern of sheetPatterns) {
+            const match = args.userMessage.match(pattern);
+            if (match && match[1]) {
+              const name = match[1].trim();
+              if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'new'].includes(name.toLowerCase())) {
+                baseSheetName = name;
+                explicitSheetSpecified = true;
+                break;
+              }
+            }
           }
+          
+          // Check if user wants a new sheet (even without specifying name)
+          const wantsNewSheet = args.userMessage.toLowerCase().includes('new sheet') || 
+                                args.userMessage.toLowerCase().includes('create sheet') ||
+                                args.userMessage.toLowerCase().includes('another sheet');
+          
+          // If no sheet name specified but user wants a new sheet, use document name as base
+          if (!baseSheetName && wantsNewSheet && allTables.length > 0) {
+            const firstDoc = allTables[0].document;
+            baseSheetName = firstDoc.fileName.replace(/\.[^/.]+$/, "").substring(0, 20); // Remove extension, limit length
+          }
+          
+          // If still no sheet name and multiple tables, use a descriptive name
+          if (!baseSheetName) {
+            if (allTables.length === 1) {
+              // Single table - use document name
+              const doc = allTables[0].document;
+              baseSheetName = doc.fileName.replace(/\.[^/.]+$/, "").substring(0, 20);
+            } else {
+              // Multiple tables - use generic name (will be numbered)
+              baseSheetName = "Table";
+            }
+          }
+          
+          // Final fallback to ensure baseSheetName is never undefined
+          if (!baseSheetName) {
+            baseSheetName = "DocumentTable";
+          }
+          
+          console.log(`📋 Base sheet name: "${baseSheetName}" (explicit: ${explicitSheetSpecified}, wantsNew: ${wantsNewSheet})`);
 
           // Create all tables
           const results: string[] = [];
@@ -1516,13 +1598,23 @@ export const generateStreamingAIResponse = internalAction({
             });
 
             if (headers.length === 0) {
+              console.log(`⚠️ Skipping table ${i + 1} - no valid headers`);
               continue; // Skip tables without headers
             }
 
-            // Use different sheet names for multiple tables
-            const sheetName = allTables.length > 1 
-              ? `${baseSheetName}_${i + 1}` 
-              : baseSheetName;
+            // Determine sheet name for this table
+            let sheetName: string;
+            if (allTables.length === 1) {
+              // Single table - use the base name directly
+              sheetName = baseSheetName;
+            } else {
+              // Multiple tables - add number suffix
+              sheetName = `${baseSheetName}_${i + 1}`;
+            }
+            
+            console.log(`📄 Creating table ${i + 1}/${allTables.length} in sheet "${sheetName}"`);
+            console.log(`   Headers: ${headers.join(", ")}`);
+            console.log(`   Data rows: ${dataRows.length}`);
 
             // Create table with actual data from document
             const result = await ctx.runMutation(internal.spreadsheets.internalCreateTableFromDocument, {
@@ -1533,21 +1625,39 @@ export const generateStreamingAIResponse = internalAction({
               sheetName,
             });
 
-            results.push(`Table ${i + 1}: "${sheetName}" with ${headers.length} columns (${headers.join(", ")}) and ${dataRows.length} data rows`);
+            results.push(`📊 **${sheetName}**: ${headers.length} columns, ${dataRows.length} rows\n   Columns: ${headers.join(", ")}`);
           }
 
           if (results.length === 0) {
             await ctx.runMutation(internal.ai.updateStreamingMessage, {
               messageId,
-              content: "I found tables in the documents but couldn't extract valid data from them. Please check the document format.",
+              content: "I found tables in the documents but couldn't extract valid data from them. Please check that the tables have clear headers and data rows.",
               isComplete: true,
             });
             return null;
           }
 
-          const responseMessage = allTables.length === 1
-            ? `I've successfully created a table from "${allTables[0].document.fileName}" in sheet "${baseSheetName}" with ${(allTables[0].table.rows[0] || []).filter((h: string) => h && h.trim()).length} columns and ${allTables[0].table.rows.length - 1} data rows.\n\nColumns: ${(allTables[0].table.rows[0] || []).filter((h: string) => h && h.trim()).join(", ")}`
-            : `I've successfully created ${allTables.length} tables from your documents:\n\n${results.join("\n")}`;
+          // Build response message based on what was created
+          let responseMessage = "";
+          
+          if (allTables.length === 1) {
+            const table = allTables[0].table;
+            const doc = allTables[0].document;
+            const headers = (table.rows[0] || []).map((h: any) => String(h || "")).filter((h: string) => h.trim());
+            const dataRowCount = table.rows.length - 1;
+            
+            responseMessage = `✅ **Successfully created table from "${doc.fileName}"**\n\n`;
+            responseMessage += `📋 **Sheet**: ${baseSheetName}\n`;
+            responseMessage += `📊 **Size**: ${headers.length} columns × ${dataRowCount} data rows\n`;
+            responseMessage += `📝 **Columns**: ${headers.join(", ")}\n\n`;
+            responseMessage += `The table has been added to your spreadsheet and is ready to use!`;
+          } else {
+            responseMessage = `✅ **Successfully created ${allTables.length} tables from your documents**\n\n`;
+            results.forEach((result, idx) => {
+              responseMessage += `${idx + 1}. ${result}\n\n`;
+            });
+            responseMessage += `All tables have been added to your spreadsheet and are ready to use!`;
+          }
 
           await ctx.runMutation(internal.ai.updateStreamingMessage, {
             messageId,
