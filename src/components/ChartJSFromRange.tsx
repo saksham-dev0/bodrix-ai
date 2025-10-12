@@ -67,60 +67,140 @@ const COLORS = [
 function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
   if (matrix.length === 0) return { labels: [], datasets: [] };
 
-  // For simple two-column data (like A1:B5), treat first column as labels, second as values
-  if (matrix.length > 0 && matrix[0].length === 2) {
-    const labels = matrix.map(row => String(row[0] || ""));
-    const data = matrix.map(row => {
-      const value = row[1];
-      return typeof value === "number" ? value : Number(value) || 0;
-    });
+  console.log("parseSpreadsheetData - matrix:", matrix);
+
+  // Check if first row looks like headers (has any non-numeric string)
+  const firstRow = matrix[0];
+  const firstRowHasNonNumericString = firstRow.some(cell => {
+    if (typeof cell === "string") {
+      const trimmed = cell.trim();
+      return trimmed !== "" && isNaN(Number(trimmed));
+    }
+    return false;
+  });
+
+  // Check if first column looks like labels (has any non-numeric string)
+  const firstColHasNonNumericString = matrix.some(row => {
+    const cell = row[0];
+    if (typeof cell === "string") {
+      const trimmed = cell.trim();
+      return trimmed !== "" && isNaN(Number(trimmed));
+    }
+    return false;
+  });
+
+  console.log("Data structure analysis:", {
+    firstRowHasNonNumericString,
+    firstColHasNonNumericString,
+    dimensions: `${matrix.length} rows x ${matrix[0]?.length || 0} cols`
+  });
+
+  // Case 1: First row is header, first column is labels
+  if (firstRowHasNonNumericString && firstColHasNonNumericString) {
+    const seriesLabels = firstRow.slice(1).map(cell => String(cell || ""));
+    const dataRows = matrix.slice(1);
+    const categoryLabels = dataRows.map(row => String(row[0] || ""));
+    
+    const datasets = [];
+    const seriesCount = Math.max(...dataRows.map(row => row.length - 1), 0);
+
+    for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
+      const seriesData = dataRows.map(row => {
+        const value = row[seriesIndex + 1];
+        return typeof value === "number" ? value : Number(value) || 0;
+      });
+
+      datasets.push({
+        label: seriesLabels[seriesIndex] || `Series ${seriesIndex + 1}`,
+        data: seriesData,
+        backgroundColor: COLORS[seriesIndex % COLORS.length],
+        borderColor: COLORS[seriesIndex % COLORS.length],
+        borderWidth: 2,
+      });
+    }
+
+    console.log("Case 1: Header row + label column:", { categoryLabels, seriesLabels, datasets });
 
     return {
-      labels,
-      datasets: [
-        {
-          label: "Values",
-          data,
-          backgroundColor: COLORS[0],
-          borderColor: COLORS[0],
-          borderWidth: 2,
-        },
-      ],
+      labels: categoryLabels,
+      datasets,
     };
   }
 
-  // Check if first row contains headers (strings)
-  const firstRow = matrix[0];
-  const hasHeaders = firstRow.some(cell => typeof cell === "string" && cell.trim() !== "");
+  // Case 2: First column has labels, no header row
+  if (firstColHasNonNumericString && !firstRowHasNonNumericString) {
+    const categoryLabels = matrix.map(row => String(row[0] || ""));
+    const seriesCount = Math.max(...matrix.map(row => row.length - 1), 0);
+    
+    const datasets = [];
+    for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
+      const seriesData = matrix.map(row => {
+        const value = row[seriesIndex + 1];
+        return typeof value === "number" ? value : Number(value) || 0;
+      });
 
-  let labels: string[] = [];
-  let dataRows: Array<Array<string | number>> = [];
+      datasets.push({
+        label: `Values ${seriesIndex + 1}`,
+        data: seriesData,
+        backgroundColor: COLORS[seriesIndex % COLORS.length],
+        borderColor: COLORS[seriesIndex % COLORS.length],
+        borderWidth: 2,
+      });
+    }
 
-  if (hasHeaders) {
-    // First row is headers, rest is data
-    labels = firstRow.slice(1).map(cell => String(cell || ""));
-    dataRows = matrix.slice(1);
-  } else {
-    // No headers, use row indices as labels
-    labels = dataRows.map((_, index) => `Series ${index + 1}`);
-    dataRows = matrix;
+    console.log("Case 2: Label column only:", { categoryLabels, datasets });
+
+    return {
+      labels: categoryLabels,
+      datasets,
+    };
   }
 
-  // For pie charts, we need a different data structure
-  if (dataRows.length === 0) return { labels: [], datasets: [] };
+  // Case 3: First row is header, no label column (all numeric data)
+  if (firstRowHasNonNumericString && !firstColHasNonNumericString) {
+    const seriesLabels = firstRow.map(cell => String(cell || ""));
+    const dataRows = matrix.slice(1);
+    const categoryLabels = dataRows.map((_, idx) => `Row ${idx + 1}`);
+    
+    const datasets = [];
+    const seriesCount = firstRow.length;
 
-  // Extract data for each series
+    for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
+      const seriesData = dataRows.map(row => {
+        const value = row[seriesIndex];
+        return typeof value === "number" ? value : Number(value) || 0;
+      });
+
+      datasets.push({
+        label: seriesLabels[seriesIndex] || `Series ${seriesIndex + 1}`,
+        data: seriesData,
+        backgroundColor: COLORS[seriesIndex % COLORS.length],
+        borderColor: COLORS[seriesIndex % COLORS.length],
+        borderWidth: 2,
+      });
+    }
+
+    console.log("Case 3: Header row only:", { categoryLabels, seriesLabels, datasets });
+
+    return {
+      labels: categoryLabels,
+      datasets,
+    };
+  }
+
+  // Case 4: All numeric data, no headers or labels
+  const categoryLabels = matrix.map((_, idx) => `Row ${idx + 1}`);
+  const seriesCount = Math.max(...matrix.map(row => row.length), 0);
+  
   const datasets = [];
-  const seriesCount = Math.max(...dataRows.map(row => row.length - 1));
-
   for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
-    const seriesData = dataRows.map(row => {
-      const value = row[seriesIndex + 1];
+    const seriesData = matrix.map(row => {
+      const value = row[seriesIndex];
       return typeof value === "number" ? value : Number(value) || 0;
     });
 
     datasets.push({
-      label: labels[seriesIndex] || `Series ${seriesIndex + 1}`,
+      label: `Series ${seriesIndex + 1}`,
       data: seriesData,
       backgroundColor: COLORS[seriesIndex % COLORS.length],
       borderColor: COLORS[seriesIndex % COLORS.length],
@@ -128,14 +208,18 @@ function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
     });
   }
 
+  console.log("Case 4: All numeric:", { categoryLabels, datasets });
+
   return {
-    labels: dataRows.map(row => String(row[0] || "")),
+    labels: categoryLabels,
     datasets,
   };
 }
 
 function parsePieChartData(matrix: Array<Array<string | number>>) {
   if (matrix.length === 0) return { labels: [], datasets: [] };
+
+  console.log("parsePieChartData - matrix:", matrix);
 
   // For pie charts, we expect: labels in first column, values in second column
   const labels: string[] = [];
@@ -150,6 +234,8 @@ function parsePieChartData(matrix: Array<Array<string | number>>) {
       backgroundColor.push(COLORS[index % COLORS.length]);
     }
   });
+
+  console.log("Pie chart data:", { labels, data, backgroundColor });
 
   return {
     labels,
@@ -170,6 +256,13 @@ const chartOptions = {
   plugins: {
     legend: {
       position: "top" as const,
+      labels: {
+        boxWidth: 12,
+        padding: 8,
+        font: {
+          size: 11,
+        },
+      },
     },
     title: {
       display: false,
@@ -178,6 +271,20 @@ const chartOptions = {
   scales: {
     y: {
       beginAtZero: true,
+      ticks: {
+        font: {
+          size: 10,
+        },
+      },
+    },
+    x: {
+      ticks: {
+        font: {
+          size: 10,
+        },
+        maxRotation: 45,
+        minRotation: 0,
+      },
     },
   },
 };
@@ -188,6 +295,13 @@ const pieChartOptions = {
   plugins: {
     legend: {
       position: "right" as const,
+      labels: {
+        boxWidth: 12,
+        padding: 8,
+        font: {
+          size: 10,
+        },
+      },
     },
     title: {
       display: false,
@@ -207,7 +321,11 @@ export default function ChartJSFromRange({ sheetData, range, type, title, showSh
     return sheetData?.[0];
   }, [sheetData, sheetName]);
   
-  const matrix = useMemo(() => extractRange2D(sheet, range), [sheet, range]);
+  const matrix = useMemo(() => {
+    const result = extractRange2D(sheet, range);
+    console.log("extractRange2D result:", { range, result, sheet: sheet?.name });
+    return result;
+  }, [sheet, range]);
   
   // Get sheet name for display
   const displaySheetName = sheet?.name || sheetName || "Sheet1";
@@ -218,7 +336,9 @@ export default function ChartJSFromRange({ sheetData, range, type, title, showSh
     displaySheetName,
     totalSheets: sheetData?.length,
     sheetData: sheetData?.map(s => s.name),
-    foundSheet: !!sheet
+    foundSheet: !!sheet,
+    range,
+    matrixLength: matrix.length
   });
 
   // Download chart as PNG
@@ -239,9 +359,24 @@ export default function ChartJSFromRange({ sheetData, range, type, title, showSh
   }, [matrix, type]);
 
   if (!matrix.length || !chartData.labels.length) {
+    console.warn("No data for chart:", { 
+      matrix, 
+      chartData, 
+      range, 
+      sheetName: displaySheetName,
+      hasSheet: !!sheet 
+    });
+    
     return (
-      <div className="w-full h-64 flex items-center justify-center border rounded bg-gray-50">
-        <div className="text-gray-500 text-sm">No data available for chart</div>
+      <div className="w-full h-full flex items-center justify-center border rounded bg-gray-50">
+        <div className="text-center px-4">
+          <div className="text-gray-500 text-sm font-medium mb-1">No data available for chart</div>
+          <div className="text-gray-400 text-xs mb-1">Range: {range}</div>
+          <div className="text-gray-400 text-xs">Sheet: {displaySheetName}</div>
+          {!sheet && (
+            <div className="text-red-400 text-xs mt-2">Sheet not found!</div>
+          )}
+        </div>
       </div>
     );
   }
@@ -275,54 +410,56 @@ export default function ChartJSFromRange({ sheetData, range, type, title, showSh
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full h-full flex flex-col">
       {showSheetName && (
-        <div className="text-xs font-medium mb-1 px-2 text-gray-500 bg-gray-50 py-1 rounded-t">
+        <div className="text-xs font-medium mb-1 px-2 text-gray-500 bg-gray-50 py-1 rounded-t flex-shrink-0">
           {displaySheetName}
         </div>
       )}
-      <div className="flex items-center justify-between px-2 py-1">
-        {title && (
-          <div className="text-sm font-medium text-gray-700">
-            {title}
-          </div>
-        )}
-        {showViewDownload && (
-          <div className="flex gap-1">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                  <Eye className="w-3 h-3" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center justify-between">
-                    <span>{title || 'Chart'} - {displaySheetName}</span>
-                    <Button onClick={downloadChart} size="sm" className="h-8">
-                      <Download className="w-3 h-3 mr-1" />
-                      Download
-                    </Button>
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="w-full h-96">
-                  <ChartComponent />
-                </div>
-              </DialogContent>
-            </Dialog>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-6 w-6 p-0"
-              onClick={downloadChart}
-              title="Download chart"
-            >
-              <Download className="w-3 h-3" />
-            </Button>
-          </div>
-        )}
-      </div>
-      <div className="h-64 w-full">
+      {(title || showViewDownload) && (
+        <div className="flex items-center justify-between px-2 py-1 flex-shrink-0">
+          {title && (
+            <div className="text-sm font-medium text-gray-700">
+              {title}
+            </div>
+          )}
+          {showViewDownload && (
+            <div className="flex gap-1">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                    <Eye className="w-3 h-3" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center justify-between">
+                      <span>{title || 'Chart'} - {displaySheetName}</span>
+                      <Button onClick={downloadChart} size="sm" className="h-8">
+                        <Download className="w-3 h-3 mr-1" />
+                        Download
+                      </Button>
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="w-full h-96">
+                    <ChartComponent />
+                  </div>
+                </DialogContent>
+              </Dialog>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 w-6 p-0"
+                onClick={downloadChart}
+                title="Download chart"
+              >
+                <Download className="w-3 h-3" />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="flex-1 w-full min-h-0">
         <ChartComponent />
       </div>
     </div>

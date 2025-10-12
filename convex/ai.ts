@@ -793,6 +793,519 @@ function sheetToMarkdownTable(sheetJson: any): string {
 }
 
 /**
+ * Analyze sheets and create a KPI dashboard
+ */
+export const analyzeSheetsForDashboard = internalMutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    userMessage: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+    dashboardId: v.optional(v.id("dashboards")),
+  }),
+  handler: async (ctx, args) => {
+    try {
+      const spreadsheet = await ctx.db.get(args.spreadsheetId);
+      if (!spreadsheet) {
+        throw new Error("Spreadsheet not found");
+      }
+
+      const data = JSON.parse(spreadsheet.data || "[]");
+      if (!Array.isArray(data) || data.length === 0) {
+        return {
+          success: false,
+          message: "No sheets found in the spreadsheet. Please add data to your sheets first.",
+        };
+      }
+
+      console.log(`📊 Analyzing ${data.length} sheet(s) for dashboard creation...`);
+
+      // Analyze each sheet to find numeric columns and potential KPIs
+      const sheetAnalysis: Array<{
+        sheetName: string;
+        numericColumns: Array<{
+          columnName: string;
+          columnIndex: number;
+          rowCount: number;
+          hasHeader: boolean;
+          dataType: "number" | "currency" | "percentage";
+          values: number[];
+        }>;
+        categoricalColumns: Array<{
+          columnName: string;
+          columnIndex: number;
+          uniqueValues: string[];
+        }>;
+        dateColumns: Array<{
+          columnName: string;
+          columnIndex: number;
+        }>;
+      }> = [];
+
+      // Analyze each sheet
+      for (const sheet of data) {
+        const sheetName = sheet.name || "Unnamed";
+        console.log(`  Analyzing sheet: ${sheetName}`);
+
+        const numericColumns: any[] = [];
+        const categoricalColumns: any[] = [];
+        const dateColumns: any[] = [];
+
+        // Find header row and columns
+        let headerRow = -1;
+        const columnHeaders: Record<number, string> = {};
+
+        // Look for headers in first 5 rows
+        for (let rowIdx = 0; rowIdx < 5 && headerRow === -1; rowIdx++) {
+          const row = sheet.rows?.[rowIdx];
+          if (!row?.cells) continue;
+
+          const cells = Object.keys(row.cells).map((k) => ({
+            index: parseInt(k),
+            text: row.cells[k].text || "",
+          }));
+
+          // Check if this looks like a header row (mostly text)
+          const nonEmptyCells = cells.filter((c) => c.text.trim());
+          if (nonEmptyCells.length > 0) {
+            headerRow = rowIdx;
+            nonEmptyCells.forEach((cell) => {
+              columnHeaders[cell.index] = cell.text;
+            });
+            break;
+          }
+        }
+
+        if (headerRow === -1) {
+          console.log(`    ⚠️ No header row found in ${sheetName}`);
+          continue;
+        }
+
+        console.log(`    Found header row at index ${headerRow} with ${Object.keys(columnHeaders).length} columns`);
+
+        // Analyze each column
+        for (const [colIndexStr, headerName] of Object.entries(columnHeaders)) {
+          const colIndex = parseInt(colIndexStr);
+          const values: any[] = [];
+          const numericValues: number[] = [];
+          const lowerHeaderName = headerName.toLowerCase();
+
+          // Skip ID columns and other non-meaningful numeric columns
+          const shouldSkipColumn = 
+            lowerHeaderName.includes("id") ||
+            lowerHeaderName === "userid" ||
+            lowerHeaderName === "user_id" ||
+            lowerHeaderName === "transactionid" ||
+            lowerHeaderName === "transaction_id" ||
+            lowerHeaderName === "productid" ||
+            lowerHeaderName === "product_id" ||
+            lowerHeaderName === "orderid" ||
+            lowerHeaderName === "order_id" ||
+            lowerHeaderName.endsWith("id") ||
+            lowerHeaderName.startsWith("id");
+
+          if (shouldSkipColumn) {
+            console.log(`    ⊘ Skipping ID column: ${headerName}`);
+            continue;
+          }
+
+          // Collect values from this column (skip header)
+          for (let rowIdx = headerRow + 1; rowIdx < (sheet.rows?.len || 100); rowIdx++) {
+            const row = sheet.rows?.[rowIdx];
+            if (!row?.cells) continue;
+
+            const cell = row.cells[colIndex];
+            if (!cell?.text) continue;
+
+            const text = cell.text.trim();
+            if (!text) continue;
+
+            // Check if calculated row (skip)
+            const lower = text.toLowerCase();
+            if (
+              lower.startsWith("sum") ||
+              lower.startsWith("average") ||
+              lower.startsWith("total") ||
+              lower.startsWith("count") ||
+              lower.includes("sum of") ||
+              lower.includes("average of")
+            ) {
+              break; // Stop at calculated rows
+            }
+
+            values.push(text);
+
+            // Try to parse as number (but be more careful)
+            const cleaned = text.replace(/[$,]/g, ""); // Remove $ and commas
+            const num = parseFloat(cleaned);
+            if (!isNaN(num) && isFinite(num)) {
+              numericValues.push(num);
+            }
+          }
+
+          if (values.length === 0) continue;
+
+          // Check if date column FIRST (before checking numeric)
+          const datePattern = /\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}/;
+          const hasDatePattern = values.some((v) => datePattern.test(v));
+          const hasDateKeyword = lowerHeaderName.includes("date") || 
+                                  lowerHeaderName.includes("time") ||
+                                  lowerHeaderName.includes("day") ||
+                                  lowerHeaderName.includes("month") ||
+                                  lowerHeaderName.includes("year");
+
+          if (hasDatePattern || hasDateKeyword) {
+            dateColumns.push({
+              columnName: headerName,
+              columnIndex: colIndex,
+            });
+            console.log(`    ✓ Date column: ${headerName}`);
+            continue; // Skip further analysis for this column
+          }
+
+          // Classify column type
+          const numericRatio = numericValues.length / values.length;
+
+          if (numericRatio > 0.8 && numericValues.length >= 3) {
+            // Additional validation: skip if values look like IDs (sequential, large numbers)
+            const avg = numericValues.reduce((a, b) => a + b, 0) / numericValues.length;
+            const isLikelyId = avg > 1000 && numericValues.every(n => n > 0 && n < 100000);
+            
+            if (isLikelyId && !lowerHeaderName.includes("price") && !lowerHeaderName.includes("amount")) {
+              console.log(`    ⊘ Skipping likely ID column: ${headerName}`);
+              continue;
+            }
+
+            // Numeric column
+            const dataType = lowerHeaderName.includes("price") ||
+              lowerHeaderName.includes("cost") ||
+              lowerHeaderName.includes("amount") ||
+              lowerHeaderName.includes("revenue") ||
+              lowerHeaderName.includes("salary") ||
+              lowerHeaderName.includes("total") ||
+              lowerHeaderName.includes("payment") ||
+              lowerHeaderName.includes("fee")
+              ? "currency"
+              : lowerHeaderName.includes("percent") ||
+                lowerHeaderName.includes("rate") ||
+                lowerHeaderName.includes("%")
+              ? "percentage"
+              : "number";
+
+            numericColumns.push({
+              columnName: headerName,
+              columnIndex: colIndex,
+              rowCount: numericValues.length,
+              hasHeader: true,
+              dataType,
+              values: numericValues,
+            });
+
+            console.log(`    ✓ Numeric column: ${headerName} (${numericValues.length} values, type: ${dataType})`);
+          } else if (values.length >= 3) {
+            // Categorical column
+            const uniqueValues = [...new Set(values)];
+            if (uniqueValues.length < values.length * 0.8 && uniqueValues.length >= 2) {
+              // Has some repetition and at least 2 categories
+              categoricalColumns.push({
+                columnName: headerName,
+                columnIndex: colIndex,
+                uniqueValues: uniqueValues.slice(0, 20), // Limit to 20 unique values
+              });
+              console.log(`    ✓ Categorical column: ${headerName} (${uniqueValues.length} unique values)`);
+            }
+          }
+        }
+
+        sheetAnalysis.push({
+          sheetName,
+          numericColumns,
+          categoricalColumns,
+          dateColumns,
+        });
+      }
+
+      // Check if we have enough data to create a dashboard
+      const totalNumericColumns = sheetAnalysis.reduce(
+        (sum, s) => sum + s.numericColumns.length,
+        0
+      );
+
+      if (totalNumericColumns === 0) {
+        let message = "❌ **Cannot create dashboard - no meaningful numeric data found**\n\n";
+        message += "**What I found:**\n";
+        
+        sheetAnalysis.forEach(sheet => {
+          message += `\n📋 **${sheet.sheetName}**:\n`;
+          if (sheet.numericColumns.length === 0 && sheet.categoricalColumns.length === 0 && sheet.dateColumns.length === 0) {
+            message += "  - No analyzable data found\n";
+          } else {
+            if (sheet.dateColumns.length > 0) {
+              message += `  - ${sheet.dateColumns.length} date column(s): ${sheet.dateColumns.map(c => c.columnName).join(", ")}\n`;
+            }
+            if (sheet.categoricalColumns.length > 0) {
+              message += `  - ${sheet.categoricalColumns.length} categorical column(s): ${sheet.categoricalColumns.map(c => c.columnName).join(", ")}\n`;
+            }
+            message += "  - ⚠️ No numeric columns for metrics\n";
+          }
+        });
+        
+        message += "\n**To create a dashboard, add numeric columns like:**\n";
+        message += "- Sales amounts, revenue, prices\n";
+        message += "- Quantities, counts, totals\n";
+        message += "- Percentages, rates\n";
+        message += "- Any measurable metrics\n\n";
+        message += "💡 **Note:** ID columns and date columns are automatically excluded from metrics.";
+        
+        return {
+          success: false,
+          message,
+        };
+      }
+
+      console.log(`📊 Found ${totalNumericColumns} numeric columns across ${sheetAnalysis.length} sheets`);
+
+      // Create dashboard
+      const dashboardName = args.userMessage.match(/(?:dashboard|kpi)(?:\s+for|\s+about|\s+of)?\s+(.+?)(?:\s*$|\s+with|\s+showing)/i)?.[1] ||
+        "KPI Dashboard";
+
+      const now = Date.now();
+      const dashboardId = await ctx.db.insert("dashboards", {
+        spreadsheetId: args.spreadsheetId,
+        ownerId: args.ownerId,
+        name: dashboardName,
+        description: `Auto-generated dashboard based on data analysis`,
+        widgetsData: "[]",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      console.log(`✅ Created dashboard: ${dashboardName}`);
+
+      // Create widgets for each numeric column
+      const widgets: Array<{ type: string; title: string }> = [];
+      let positionY = 0;
+
+      for (const sheetInfo of sheetAnalysis) {
+        let positionX = 0;
+
+        // Create metric widgets for key statistics
+        for (const numCol of sheetInfo.numericColumns) {
+          // Calculate sum, average, etc.
+          const sum = numCol.values.reduce((a, b) => a + b, 0);
+          const avg = sum / numCol.values.length;
+          const min = Math.min(...numCol.values);
+          const max = Math.max(...numCol.values);
+
+          // Create a metric widget for the average or sum
+          const metricType = numCol.dataType === "currency" ? "sum" : "average";
+          const metricValue = metricType === "sum" ? sum : avg;
+          const formattedValue =
+            numCol.dataType === "currency"
+              ? `$${metricValue.toFixed(2)}`
+              : numCol.dataType === "percentage"
+              ? `${metricValue.toFixed(1)}%`
+              : metricValue.toFixed(2);
+
+          await ctx.db.insert("dashboardWidgets", {
+            dashboardId,
+            ownerId: args.ownerId,
+            type: "metric",
+            title: `${metricType === "sum" ? "Total" : "Average"} ${numCol.columnName}`,
+            metricValue: formattedValue,
+            metricFormula: metricType.toUpperCase(),
+            metricColumn: numCol.columnName,
+            sheetName: sheetInfo.sheetName,
+            position: {
+              x: positionX,
+              y: positionY,
+              width: 3,
+              height: 2,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          widgets.push({
+            type: "metric",
+            title: `${metricType === "sum" ? "Total" : "Average"} ${numCol.columnName}`,
+          });
+
+          positionX += 3;
+          if (positionX >= 12) {
+            positionX = 0;
+            positionY += 2;
+          }
+        }
+
+        // Create chart widgets for numeric data with categories
+        if (
+          sheetInfo.categoricalColumns.length > 0 &&
+          sheetInfo.numericColumns.length > 0
+        ) {
+          // Start new row for charts
+          if (positionX > 0) {
+            positionX = 0;
+            positionY += 2;
+          }
+
+          // Create a bar chart combining first categorical and numeric column
+          const catCol = sheetInfo.categoricalColumns[0];
+          const numCol = sheetInfo.numericColumns[0];
+
+          // Find the range that includes both columns
+          const minCol = Math.min(catCol.columnIndex, numCol.columnIndex);
+          const maxCol = Math.max(catCol.columnIndex, numCol.columnIndex);
+          const maxRow = numCol.rowCount + 1; // +1 for header
+
+          const colToLetter = (col: number) => {
+            let letter = "";
+            let c = col;
+            while (c >= 0) {
+              letter = String.fromCharCode((c % 26) + 65) + letter;
+              c = Math.floor(c / 26) - 1;
+            }
+            return letter;
+          };
+
+          const range = `${colToLetter(minCol)}1:${colToLetter(maxCol)}${maxRow}`;
+
+          await ctx.db.insert("dashboardWidgets", {
+            dashboardId,
+            ownerId: args.ownerId,
+            type: "chart",
+            title: `${numCol.columnName} by ${catCol.columnName}`,
+            chartType: "bar",
+            range: range,
+            sheetName: sheetInfo.sheetName,
+            position: {
+              x: 0,
+              y: positionY,
+              width: 6,
+              height: 4,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          widgets.push({
+            type: "chart",
+            title: `${numCol.columnName} by ${catCol.columnName}`,
+          });
+
+          // Create a pie chart if we have good categorical data
+          if (catCol.uniqueValues.length <= 10) {
+            await ctx.db.insert("dashboardWidgets", {
+              dashboardId,
+              ownerId: args.ownerId,
+              type: "chart",
+              title: `${numCol.columnName} Distribution`,
+              chartType: "pie",
+              range: range,
+              sheetName: sheetInfo.sheetName,
+              position: {
+                x: 6,
+                y: positionY,
+                width: 6,
+                height: 4,
+              },
+              createdAt: now,
+              updatedAt: now,
+            });
+
+            widgets.push({
+              type: "chart",
+              title: `${numCol.columnName} Distribution`,
+            });
+          }
+
+          positionY += 4;
+        }
+
+        // Create line chart for time series if we have date column
+        if (
+          sheetInfo.dateColumns.length > 0 &&
+          sheetInfo.numericColumns.length > 0
+        ) {
+          const dateCol = sheetInfo.dateColumns[0];
+          const numCol = sheetInfo.numericColumns[0];
+
+          const minCol = Math.min(dateCol.columnIndex, numCol.columnIndex);
+          const maxCol = Math.max(dateCol.columnIndex, numCol.columnIndex);
+          const maxRow = numCol.rowCount + 1;
+
+          const colToLetter = (col: number) => {
+            let letter = "";
+            let c = col;
+            while (c >= 0) {
+              letter = String.fromCharCode((c % 26) + 65) + letter;
+              c = Math.floor(c / 26) - 1;
+            }
+            return letter;
+          };
+
+          const range = `${colToLetter(minCol)}1:${colToLetter(maxCol)}${maxRow}`;
+
+          await ctx.db.insert("dashboardWidgets", {
+            dashboardId,
+            ownerId: args.ownerId,
+            type: "chart",
+            title: `${numCol.columnName} Over Time`,
+            chartType: "line",
+            range: range,
+            sheetName: sheetInfo.sheetName,
+            position: {
+              x: 0,
+              y: positionY,
+              width: 12,
+              height: 4,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          widgets.push({
+            type: "chart",
+            title: `${numCol.columnName} Over Time`,
+          });
+
+          positionY += 4;
+        }
+      }
+
+      // Build success message
+      let message = `✅ **Successfully created "${dashboardName}"**\n\n`;
+      message += `📊 **Dashboard Contents:**\n`;
+      message += `- **${widgets.filter((w) => w.type === "metric").length}** KPI Metrics\n`;
+      message += `- **${widgets.filter((w) => w.type === "chart").length}** Visualizations\n`;
+      message += `- **${sheetAnalysis.length}** Sheet(s) analyzed\n\n`;
+
+      message += `**Widgets Created:**\n`;
+      widgets.forEach((widget, idx) => {
+        message += `${idx + 1}. ${widget.type === "metric" ? "📈" : "📊"} ${widget.title}\n`;
+      });
+
+      message += `\n💡 Your dashboard is ready! You can view it in the Dashboards section.`;
+
+      return {
+        success: true,
+        message,
+        dashboardId,
+      };
+    } catch (error) {
+      console.error("Error analyzing sheets for dashboard:", error);
+      return {
+        success: false,
+        message: `Failed to analyze sheets: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  },
+});
+
+/**
  * Helper function to build AI context with complete spreadsheet data and documents
  */
 function buildAIContext(
@@ -1424,6 +1937,74 @@ export const generateStreamingAIResponse = internalAction({
           await ctx.runMutation(internal.ai.updateStreamingMessage, {
             messageId,
             content: `Failed to create chart: ${error instanceof Error ? error.message : String(error)}. Please make sure the columns and sheet name are correct.`,
+            isComplete: true,
+          });
+          
+          return null;
+        }
+      }
+
+      // Check for KPI dashboard creation requests
+      if (
+        (args.userMessage.toLowerCase().includes("dashboard") ||
+         args.userMessage.toLowerCase().includes("kpi") ||
+         args.userMessage.toLowerCase().includes("key performance indicator")) &&
+        (args.userMessage.toLowerCase().includes("create") ||
+         args.userMessage.toLowerCase().includes("make") ||
+         args.userMessage.toLowerCase().includes("build") ||
+         args.userMessage.toLowerCase().includes("generate") ||
+         args.userMessage.toLowerCase().includes("show"))
+      ) {
+        console.log("📊 KPI Dashboard creation request detected");
+        
+        const messageId = await ctx.runMutation(internal.ai.createStreamingMessage, {
+          conversationId: args.conversationId,
+          agentId: args.agentId,
+          modelName: agent?.modelName,
+          provider: agent?.provider,
+        });
+
+        try {
+          // Get spreadsheet data to analyze
+          const spreadsheetData = await ctx.runQuery(internal.ai.getSpreadsheetData, {
+            spreadsheetId: conversation.conversation.spreadsheetId,
+          });
+
+          if (!spreadsheetData?.data) {
+            throw new Error("No spreadsheet data found");
+          }
+
+          const data = JSON.parse(spreadsheetData.data);
+          
+          if (!Array.isArray(data) || data.length === 0) {
+            throw new Error("No sheets found in spreadsheet");
+          }
+
+          // Analyze the data to determine relevant KPIs
+          const analysisResult = await ctx.runMutation(internal.ai.analyzeSheetsForDashboard, {
+            spreadsheetId: conversation.conversation.spreadsheetId,
+            ownerId: conversation.conversation.ownerId,
+            userMessage: args.userMessage,
+          });
+
+          if (!analysisResult.success) {
+            throw new Error(analysisResult.message || "Failed to analyze data");
+          }
+
+          // Update message with success
+          await ctx.runMutation(internal.ai.updateStreamingMessage, {
+            messageId,
+            content: analysisResult.message,
+            isComplete: true,
+          });
+
+          return null;
+        } catch (error) {
+          console.error("Error creating KPI dashboard:", error);
+          
+          await ctx.runMutation(internal.ai.updateStreamingMessage, {
+            messageId,
+            content: `Failed to create KPI dashboard: ${error instanceof Error ? error.message : String(error)}. Please make sure your spreadsheet has data in the sheets.`,
             isComplete: true,
           });
           

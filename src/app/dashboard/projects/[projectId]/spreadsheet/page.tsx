@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ChartJSFromRange from "@/components/ChartJSFromRange";
 import ResizableAISidebar from "@/components/ResizableAISidebar";
+import DashboardList from "@/components/DashboardList";
 import {
   ArrowLeft,
   Save,
@@ -21,6 +22,8 @@ import {
   Upload,
   Trash2,
   Bot,
+  LayoutDashboard,
+  BarChart3,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -59,6 +62,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   const [activeSheetName, setActiveSheetName] = useState("Sheet1");
   const [selectedRange, setSelectedRange] = useState<string>("");
   const [isAISidebarOpen, setIsAISidebarOpen] = useState(false);
+  const [bottomPanelTab, setBottomPanelTab] = useState<"charts" | "dashboards">("charts");
 
   const spreadsheetEngineRef = useRef<SheetRef>(null);
 
@@ -453,42 +457,71 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
         />
       </div>
 
-      {/* Charts Panel */}
+      {/* Charts & Dashboards Panel */}
       <div className="border-t bg-white flex-shrink-0 w-full">
         <div className="px-3 py-2 grid gap-2">
-          <div className="text-xs text-muted-foreground">Charts</div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {charts?.map((c, idx) => (
-              <div key={`${c._id}-${idx}`} className="border rounded p-2 relative group">
-                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() => handleDeleteChart(c._id)}
-                    title="Delete chart"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
-                </div>
-                <ChartJSFromRange
-                  sheetData={
-                    sheetDataCache ||
-                    spreadsheetEngineRef.current?.getData() ||
-                    (spreadsheetDoc?.data ? JSON.parse(spreadsheetDoc.data) : [])
-                  }
-                  range={c.range}
-                  type={c.type as any}
-                  title={c.title}
-                  showSheetName={true}
-                  sheetName={c.sheetName || "Sheet1"}
-                />
-              </div>
-            ))}
-            {!charts?.length && (
-              <div className="text-xs text-muted-foreground px-1">No charts yet.</div>
-            )}
+          {/* Tabs */}
+          <div className="flex items-center gap-2 border-b">
+            <Button
+              variant={bottomPanelTab === "charts" ? "default" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setBottomPanelTab("charts")}
+            >
+              <BarChart3 className="w-3 h-3 mr-1" />
+              Charts
+            </Button>
+            <Button
+              variant={bottomPanelTab === "dashboards" ? "default" : "ghost"}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setBottomPanelTab("dashboards")}
+            >
+              <LayoutDashboard className="w-3 h-3 mr-1" />
+              Dashboards
+            </Button>
           </div>
+
+          {/* Charts Tab Content */}
+          {bottomPanelTab === "charts" && (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {charts?.map((c, idx) => (
+                <div key={`${c._id}-${idx}`} className="border rounded p-2 relative group">
+                  <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={() => handleDeleteChart(c._id)}
+                      title="Delete chart"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  <ChartJSFromRange
+                    sheetData={
+                      sheetDataCache ||
+                      spreadsheetEngineRef.current?.getData() ||
+                      (spreadsheetDoc?.data ? JSON.parse(spreadsheetDoc.data) : [])
+                    }
+                    range={c.range}
+                    type={c.type as any}
+                    title={c.title}
+                    showSheetName={true}
+                    sheetName={c.sheetName || "Sheet1"}
+                  />
+                </div>
+              ))}
+              {!charts?.length && (
+                <div className="text-xs text-muted-foreground px-1">No charts yet.</div>
+              )}
+            </div>
+          )}
+
+          {/* Dashboards Tab Content */}
+          {bottomPanelTab === "dashboards" && spreadsheetId && (
+            <DashboardList spreadsheetId={spreadsheetId} />
+          )}
         </div>
       </div>
     </div>

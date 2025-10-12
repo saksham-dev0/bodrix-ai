@@ -165,4 +165,62 @@ export default defineSchema({
     .index("by_conversation", ["conversationId"])
     .index("by_owner", ["ownerId"])
     .index("by_status", ["processingStatus"]),
+
+  // KPI Dashboards
+  dashboards: defineTable({
+    spreadsheetId: v.id("spreadsheets"),
+    ownerId: v.id("users"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    // Array of widget configurations stored as JSON string
+    // Each widget contains: type, chartId (optional), title, config (ranges, sheets, etc.)
+    widgetsData: v.string(),
+    layout: v.optional(v.string()), // Grid layout configuration as JSON
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_owner", ["ownerId"]),
+
+  // Dashboard Widgets (individual visualizations/metrics in a dashboard)
+  dashboardWidgets: defineTable({
+    dashboardId: v.id("dashboards"),
+    ownerId: v.id("users"),
+    type: v.union(
+      v.literal("chart"),
+      v.literal("metric"),
+      v.literal("table"),
+      v.literal("text")
+    ),
+    title: v.string(),
+    // For chart widgets
+    chartType: v.optional(
+      v.union(
+        v.literal("line"),
+        v.literal("bar"),
+        v.literal("area"),
+        v.literal("pie")
+      )
+    ),
+    range: v.optional(v.string()),
+    sheetName: v.optional(v.string()),
+    // For metric widgets (single KPI value)
+    metricValue: v.optional(v.string()),
+    metricFormula: v.optional(v.string()), // e.g., "SUM", "AVG", "COUNT"
+    metricColumn: v.optional(v.string()),
+    // For table widgets
+    tableRange: v.optional(v.string()),
+    tableSheetName: v.optional(v.string()),
+    // Position and sizing in grid
+    position: v.object({
+      x: v.number(),
+      y: v.number(),
+      width: v.number(),
+      height: v.number(),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_dashboard", ["dashboardId"])
+    .index("by_owner", ["ownerId"]),
 });
