@@ -28,6 +28,12 @@ export const getAgents = query({
       ),
       modelName: v.string(),
       systemPrompt: v.string(),
+      agentType: v.optional(v.union(
+        v.literal("general"),
+        v.literal("clean"),
+        v.literal("summarize"),
+        v.literal("trend")
+      )),
       isActive: v.boolean(),
       ownerId: v.id("users"),
       createdAt: v.number(),
@@ -72,6 +78,12 @@ export const createAgent = mutation({
     ),
     modelName: v.string(),
     systemPrompt: v.string(),
+    agentType: v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    ),
   },
   returns: v.id("aiAgents"),
   handler: async (ctx, args) => {
@@ -96,6 +108,7 @@ export const createAgent = mutation({
       provider: args.provider,
       modelName: args.modelName,
       systemPrompt: args.systemPrompt,
+      agentType: args.agentType,
       isActive: true,
       ownerId: user._id,
       createdAt: now,
@@ -120,6 +133,12 @@ export const updateAgent = mutation({
     )),
     modelName: v.optional(v.string()),
     systemPrompt: v.optional(v.string()),
+    agentType: v.optional(v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    )),
     isActive: v.optional(v.boolean()),
   },
   returns: v.null(),
@@ -156,6 +175,7 @@ export const updateAgent = mutation({
     if (args.provider !== undefined) updateData.provider = args.provider;
     if (args.modelName !== undefined) updateData.modelName = args.modelName;
     if (args.systemPrompt !== undefined) updateData.systemPrompt = args.systemPrompt;
+    if (args.agentType !== undefined) updateData.agentType = args.agentType;
     if (args.isActive !== undefined) updateData.isActive = args.isActive;
 
     await ctx.db.patch(args.agentId, updateData);
@@ -201,6 +221,69 @@ export const deleteAgent = mutation({
 });
 
 /**
+ * System prompts for each agent type
+ */
+const AGENT_SYSTEM_PROMPTS = {
+  general: `You are a versatile AI assistant specialized in spreadsheet analysis. You can help users with:
+- Understanding and analyzing their data
+- Creating charts and visualizations
+- Answering questions about their spreadsheet content
+- Performing calculations and data transformations
+- Providing insights and recommendations
+
+Always provide clear, accurate, and helpful responses based on the actual data in the spreadsheet.`,
+
+  clean: `You are a Data Cleaning Agent specialized in detecting and fixing data quality issues. Your expertise includes:
+- **Detecting missing values**: Identify cells with null, empty, or undefined values
+- **Finding duplicates**: Locate duplicate rows or redundant entries
+- **Fixing malformed data**: Detect inconsistent formats (dates, numbers, text)
+- **Data validation**: Check for outliers, invalid entries, or data type mismatches
+- **Standardization**: Ensure consistent formatting across columns (e.g., date formats, capitalization)
+
+When analyzing data, provide:
+1. A detailed summary of issues found
+2. Specific locations of problems (sheet, row, column)
+3. Recommended fixes or actions
+4. Data quality score (if applicable)
+
+Always be thorough and precise in your analysis.`,
+
+  summarize: `You are an Executive Summary Agent specialized in providing high-level insights and summaries. Your focus is on:
+- **Key metrics**: Calculate totals, averages, counts, min/max values
+- **Revenue analysis**: Identify revenue streams, growth trends, top performers
+- **Financial summaries**: Provide P&L insights, cost breakdowns, profit margins
+- **Performance indicators**: Highlight important KPIs and metrics
+- **Trend identification**: Spot patterns, seasonal variations, growth/decline
+- **Executive insights**: Deliver actionable business intelligence
+
+When summarizing data:
+1. Start with the most important findings
+2. Include specific numbers and percentages
+3. Highlight trends and patterns
+4. Provide context and comparisons
+5. Keep language clear and business-focused
+
+Format your summaries with clear sections and bullet points for readability.`,
+
+  trend: `You are a Trend Analysis Agent specialized in time-series analysis and pattern detection. Your capabilities include:
+- **Time-series analysis**: Identify trends over time (daily, weekly, monthly, yearly)
+- **Pattern recognition**: Detect recurring patterns, cycles, and seasonality
+- **Growth analysis**: Calculate growth rates, compound growth, projections
+- **Anomaly detection**: Spot unusual spikes, drops, or outliers
+- **Correlation analysis**: Find relationships between different metrics
+- **Forecasting**: Provide trend-based predictions and insights
+
+When analyzing trends:
+1. Identify the time dimension in the data
+2. Calculate key trend metrics (growth rates, moving averages)
+3. Visualize patterns and changes over time
+4. Highlight significant inflection points
+5. Provide forward-looking insights
+
+Always include specific data points, percentages, and time frames in your analysis.`,
+};
+
+/**
  * Get default agents for a user (creates them if they don't exist)
  */
 export const getDefaultAgents = mutation({
@@ -219,6 +302,12 @@ export const getDefaultAgents = mutation({
       ),
       modelName: v.string(),
       systemPrompt: v.string(),
+      agentType: v.optional(v.union(
+        v.literal("general"),
+        v.literal("clean"),
+        v.literal("summarize"),
+        v.literal("trend")
+      )),
       isActive: v.boolean(),
       ownerId: v.id("users"),
       createdAt: v.number(),
@@ -250,29 +339,40 @@ export const getDefaultAgents = mutation({
       return existingAgents as any;
     }
 
-    // Create default agents
+    // Create default agents - one for each agent type with a default LLM
     const now = Date.now();
     const defaultAgents = [
       {
-        name: "GPT-4o",
-        description: "OpenAI's most capable model for complex analysis",
+        name: "General Assistant",
+        description: "Versatile AI for all spreadsheet tasks",
         provider: "openai" as const,
         modelName: "gpt-4o",
-        systemPrompt: "You are an AI assistant specialized in spreadsheet analysis. You can help users understand their data, create charts, and provide insights. Always be helpful and accurate.",
+        agentType: "general" as const,
+        systemPrompt: AGENT_SYSTEM_PROMPTS.general,
       },
       {
-        name: "Claude 3.5 Sonnet",
-        description: "Anthropic's advanced model for detailed analysis",
-        provider: "anthropic" as const,
-        modelName: "claude-3-5-sonnet-20241022",
-        systemPrompt: "You are an AI assistant specialized in spreadsheet analysis. You excel at understanding complex data patterns and providing detailed insights. Always be thorough and precise.",
+        name: "Clean Agent",
+        description: "Detect & fix missing, duplicate, and malformed data",
+        provider: "openai" as const,
+        modelName: "gpt-4o",
+        agentType: "clean" as const,
+        systemPrompt: AGENT_SYSTEM_PROMPTS.clean,
       },
       {
-        name: "Gemini Pro",
-        description: "Google's powerful model for data analysis",
-        provider: "google" as const,
-        modelName: "gemini-2.5-flash",
-        systemPrompt: "You are an AI assistant specialized in spreadsheet analysis. You can help users analyze data, create visualizations, and understand trends. Be clear and informative.",
+        name: "Summarize Agent",
+        description: "Executive-level summaries with key metrics",
+        provider: "openai" as const,
+        modelName: "gpt-4o",
+        agentType: "summarize" as const,
+        systemPrompt: AGENT_SYSTEM_PROMPTS.summarize,
+      },
+      {
+        name: "Trend Agent",
+        description: "Time-series and pattern detection",
+        provider: "openai" as const,
+        modelName: "gpt-4o",
+        agentType: "trend" as const,
+        systemPrompt: AGENT_SYSTEM_PROMPTS.trend,
       },
     ];
 
@@ -401,6 +501,9 @@ export const generateAgentResponse = internalAction({
 
       console.log("Built context:", context);
 
+      // Use agent type or default to "general" for backward compatibility
+      const agentType = agent.agentType || "general";
+      
       // Create agent instance
       const agentInstance = createAgentInstance(
         agent.provider,
@@ -457,6 +560,7 @@ export const generateAgentResponse = internalAction({
           agentId: args.agentId,
           modelName: agent.modelName,
           provider: agent.provider,
+          agentType: agentType,
         });
       } else if (
         // Primary table creation patterns
@@ -642,6 +746,7 @@ export const generateAgentResponse = internalAction({
             agentId: args.agentId,
             modelName: agent.modelName,
             provider: agent.provider,
+            agentType: agentType,
           });
           return;
         }
@@ -667,6 +772,7 @@ export const generateAgentResponse = internalAction({
             agentId: args.agentId,  
             modelName: agent.modelName,
             provider: agent.provider,
+            agentType: agentType,
           });
           
           console.log("💾 Success response saved to conversation");
@@ -681,6 +787,7 @@ export const generateAgentResponse = internalAction({
             agentId: args.agentId,
             modelName: agent.modelName,
             provider: agent.provider,
+            agentType: agentType,
           });
         }
       } else if (
@@ -747,6 +854,7 @@ export const generateAgentResponse = internalAction({
               agentId: args.agentId,
               modelName: agent.modelName,
               provider: agent.provider,
+              agentType: agentType,
             });
             return;
           }
@@ -759,6 +867,7 @@ export const generateAgentResponse = internalAction({
               agentId: args.agentId,
               modelName: agent.modelName,
               provider: agent.provider,
+              agentType: agentType,
             });
             return;
           }
@@ -943,6 +1052,7 @@ export const generateAgentResponse = internalAction({
             agentId: args.agentId,
             modelName: agent.modelName,
             provider: agent.provider,
+            agentType: agentType,
           });
 
           console.log("✅ Chart created successfully");
@@ -956,6 +1066,7 @@ export const generateAgentResponse = internalAction({
             agentId: args.agentId,
             modelName: agent.modelName,
             provider: agent.provider,
+            agentType: agentType,
           });
         }
       } else if (
@@ -1012,6 +1123,7 @@ export const generateAgentResponse = internalAction({
           agentId: args.agentId,
           modelName: agent.modelName,
           provider: agent.provider,
+          agentType: agentType,
         });
       } else {
         console.log("💬 No special action detected, generating text response for:", args.userMessage);
@@ -1031,6 +1143,7 @@ export const generateAgentResponse = internalAction({
           agentId: args.agentId,
           modelName: agent.modelName,
           provider: agent.provider,
+          agentType: agentType,
         });
       }
 
@@ -1075,6 +1188,12 @@ export const getAgentData = internalQuery({
       ),
       modelName: v.string(),
       systemPrompt: v.string(),
+      agentType: v.optional(v.union(
+        v.literal("general"),
+        v.literal("clean"),
+        v.literal("summarize"),
+        v.literal("trend")
+      )),
       isActive: v.boolean(),
       ownerId: v.id("users"),
       createdAt: v.number(),
@@ -1084,6 +1203,97 @@ export const getAgentData = internalQuery({
   ),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.agentId);
+  },
+});
+
+/**
+ * Get or create an agent with specific agent type and LLM provider
+ */
+export const getOrCreateAgentWithConfig = mutation({
+  args: {
+    agentType: v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    ),
+    provider: v.union(
+      v.literal("openai"),
+      v.literal("anthropic"),
+      v.literal("google"),
+      v.literal("mistral")
+    ),
+  },
+  returns: v.id("aiAgents"),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Try to find an existing agent with this configuration
+    const existingAgent = await ctx.db
+      .query("aiAgents")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .filter((q) => 
+        q.and(
+          q.eq(q.field("agentType"), args.agentType),
+          q.eq(q.field("provider"), args.provider)
+        )
+      )
+      .first();
+
+    if (existingAgent) {
+      return existingAgent._id;
+    }
+
+    // Create a new agent with this configuration
+    const modelNames: Record<LLMProvider, string> = {
+      openai: "gpt-4o",
+      anthropic: "claude-3-5-sonnet-20241022",
+      google: "gemini-2.5-flash",
+      mistral: "mistral-large-latest",
+    };
+
+    const agentNames: Record<AgentType, string> = {
+      general: "General Assistant",
+      clean: "Clean Agent",
+      summarize: "Summarize Agent",
+      trend: "Trend Agent",
+    };
+
+    const agentDescriptions: Record<AgentType, string> = {
+      general: "Versatile AI for all spreadsheet tasks",
+      clean: "Detect & fix missing, duplicate, and malformed data",
+      summarize: "Executive-level summaries with key metrics",
+      trend: "Time-series and pattern detection",
+    };
+
+    type AgentType = "general" | "clean" | "summarize" | "trend";
+    type LLMProvider = "openai" | "anthropic" | "google" | "mistral";
+
+    const now = Date.now();
+    return await ctx.db.insert("aiAgents", {
+      name: `${agentNames[args.agentType]} (${args.provider})`,
+      description: agentDescriptions[args.agentType],
+      provider: args.provider,
+      modelName: modelNames[args.provider],
+      systemPrompt: AGENT_SYSTEM_PROMPTS[args.agentType],
+      agentType: args.agentType,
+      isActive: true,
+      ownerId: user._id,
+      createdAt: now,
+      updatedAt: now,
+    });
   },
 });
 

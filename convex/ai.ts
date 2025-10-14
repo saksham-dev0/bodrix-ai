@@ -540,6 +540,12 @@ export const saveAIResponse = internalMutation({
     agentId: v.optional(v.id("aiAgents")),
     modelName: v.optional(v.string()),
     provider: v.optional(v.string()),
+    agentType: v.optional(v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    )),
     isStreaming: v.optional(v.boolean()),
     isComplete: v.optional(v.boolean()),
   },
@@ -561,6 +567,7 @@ export const saveAIResponse = internalMutation({
       agentId: args.agentId,
       modelName: args.modelName,
       provider: args.provider,
+      agentType: args.agentType,
       isStreaming: args.isStreaming || false,
       isComplete: args.isComplete || true,
       createdAt: now,
@@ -584,6 +591,12 @@ export const createStreamingMessage = internalMutation({
     agentId: v.optional(v.id("aiAgents")),
     modelName: v.optional(v.string()),
     provider: v.optional(v.string()),
+    agentType: v.optional(v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    )),
   },
   returns: v.id("aiMessages"),
   handler: async (ctx, args) => {
@@ -602,6 +615,7 @@ export const createStreamingMessage = internalMutation({
       agentId: args.agentId,
       modelName: args.modelName,
       provider: args.provider,
+      agentType: args.agentType,
       isStreaming: true,
       isComplete: false,
       createdAt: now,

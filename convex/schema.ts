@@ -99,6 +99,12 @@ export default defineSchema({
     agentId: v.optional(v.string()),
     modelName: v.optional(v.string()),
     provider: v.optional(v.string()), // "openai", "anthropic", "google", "mistral"
+    agentType: v.optional(v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    )),
     // Streaming support
     isStreaming: v.optional(v.boolean()), // true if message is currently being streamed
     isComplete: v.optional(v.boolean()), // true if streaming is complete
@@ -119,6 +125,13 @@ export default defineSchema({
     ),
     modelName: v.string(),
     systemPrompt: v.string(),
+    // Agent type: specialized capabilities (optional for backward compatibility)
+    agentType: v.optional(v.union(
+      v.literal("general"),
+      v.literal("clean"),
+      v.literal("summarize"),
+      v.literal("trend")
+    )),
     isActive: v.boolean(),
     ownerId: v.id("users"),
     createdAt: v.number(),

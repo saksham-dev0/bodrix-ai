@@ -31,6 +31,9 @@ interface ResizableAISidebarProps {
   onToggle: () => void;
 }
 
+type AgentType = "general" | "clean" | "summarize" | "trend";
+type LLMProvider = "openai" | "anthropic" | "google" | "mistral";
+
 export default function ResizableAISidebar({
   spreadsheetId,
   sheetData,
@@ -46,6 +49,8 @@ export default function ResizableAISidebar({
   const [isResizing, setIsResizing] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<Id<"aiAgents"> | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [selectedAgentType, setSelectedAgentType] = useState<AgentType>("general");
+  const [selectedLLMProvider, setSelectedLLMProvider] = useState<LLMProvider>("openai");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -65,6 +70,7 @@ export default function ResizableAISidebar({
   const deleteConversation = useMutation(api.ai.deleteConversation);
   const getSheetData = useQuery(api.ai.getSheetData, { spreadsheetId });
   const getDefaultAgents = useMutation(api.aiAgents.getDefaultAgents);
+  const getOrCreateAgentWithConfig = useMutation(api.aiAgents.getOrCreateAgentWithConfig);
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
   const createDocument = useMutation(api.documents.createDocument);
   const deleteDocument = useMutation(api.documents.deleteDocument);
@@ -107,16 +113,41 @@ export default function ResizableAISidebar({
     if (agents && agents.length > 0 && !selectedAgentId) {
       const defaultAgent = agents.find(agent => agent.isActive) || agents[0];
       setSelectedAgentId(defaultAgent._id);
+      setSelectedAgentType(defaultAgent.agentType || "general");
+      setSelectedLLMProvider(defaultAgent.provider);
     } else if (agents && agents.length === 0 && !selectedAgentId) {
       // Create default agents if none exist
       getDefaultAgents().then((defaultAgents) => {
         if (defaultAgents && defaultAgents.length > 0) {
           const firstAgent = defaultAgents.find((agent: any) => agent.isActive) || defaultAgents[0];
           setSelectedAgentId(firstAgent._id);
+          setSelectedAgentType(firstAgent.agentType || "general");
+          setSelectedLLMProvider(firstAgent.provider);
         }
       }).catch(console.error);
     }
   }, [agents, selectedAgentId, getDefaultAgents]);
+
+  // Update selected agent when agent type or LLM provider changes
+  useEffect(() => {
+    if (agents && agents.length > 0) {
+      // Find an agent that matches the selected agent type and LLM provider
+      const matchingAgent = agents.find(
+        agent => (agent.agentType || "general") === selectedAgentType && agent.provider === selectedLLMProvider
+      );
+      
+      if (matchingAgent) {
+        setSelectedAgentId(matchingAgent._id);
+      } else {
+        // If no exact match, try to find one with the same agent type
+        const typeMatch = agents.find(agent => (agent.agentType || "general") === selectedAgentType);
+        if (typeMatch) {
+          setSelectedAgentId(typeMatch._id);
+          setSelectedLLMProvider(typeMatch.provider);
+        }
+      }
+    }
+  }, [selectedAgentType, selectedLLMProvider, agents]);
 
   const handleSendMessage = async () => {
     if (!messageInput.trim() || !currentConversationId || isLoading) return;
@@ -126,6 +157,12 @@ export default function ResizableAISidebar({
     setIsLoading(true);
 
     try {
+      // Get or create agent with the selected configuration
+      const agentId = await getOrCreateAgentWithConfig({
+        agentType: selectedAgentType,
+        provider: selectedLLMProvider,
+      });
+      
       // Use database data if available, otherwise use frontend data
       const liveData = getSheetData?.data || JSON.stringify(sheetData);
       
@@ -135,7 +172,7 @@ export default function ResizableAISidebar({
         selectedRange,
         activeSheetName,
         liveSpreadsheetData: liveData,
-        agentId: selectedAgentId || undefined,
+        agentId: agentId,
       });
     } catch (error) {
       console.error("Error sending message:", error);
@@ -516,30 +553,87 @@ export default function ResizableAISidebar({
         </Button>
       </div>
 
-      {/* Agent Selection */}
+      {/* Agent Type and LLM Selection */}
       <div className="p-4 border-b flex-shrink-0">
-        <div className="flex items-center gap-2 mb-2">
-          <Settings className="w-3 h-3" />
-          <span className="text-sm font-medium">AI Model</span>
+        <div className="space-y-3">
+          {/* Agent Type Selection */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Bot className="w-3 h-3" />
+              <span className="text-sm font-medium">Agent Type</span>
+            </div>
+            <Select
+              value={selectedAgentType}
+              onValueChange={(value) => setSelectedAgentType(value as AgentType)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select agent type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="general">
+                  <div className="flex flex-col">
+                    <span className="font-medium">General Assistant</span>
+                    <span className="text-xs text-gray-500">Versatile AI for all tasks</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="clean">
+                  <div className="flex flex-col">
+                    <span className="font-medium">Clean Agent</span>
+                    <span className="text-xs text-gray-500">Detect & fix data issues</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="summarize">
+                  <div className="flex flex-col">
+                    <span className="font-medium">Summarize Agent</span>
+                    <span className="text-xs text-gray-500">Executive summaries & KPIs</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="trend">
+                  <div className="flex flex-col">
+                    <span className="font-medium">Trend Agent</span>
+                    <span className="text-xs text-gray-500">Time-series & patterns</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* LLM Provider Selection */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Settings className="w-3 h-3" />
+              <span className="text-sm font-medium">LLM Provider</span>
+            </div>
+            <Select
+              value={selectedLLMProvider}
+              onValueChange={(value) => setSelectedLLMProvider(value as LLMProvider)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select LLM provider" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">
+                  <div className="flex flex-col">
+                    <span className="font-medium">OpenAI</span>
+                    <span className="text-xs text-gray-500">GPT-4o - Most capable</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="anthropic">
+                  <div className="flex flex-col">
+                    <span className="font-medium">Anthropic</span>
+                    <span className="text-xs text-gray-500">Claude 3.5 - Advanced reasoning</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="google">
+                  <div className="flex flex-col">
+                    <span className="font-medium">Google</span>
+                    <span className="text-xs text-gray-500">Gemini - Fast & efficient</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-        <Select
-          value={selectedAgentId || ""}
-          onValueChange={(value) => setSelectedAgentId(value as Id<"aiAgents">)}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select AI model" />
-          </SelectTrigger>
-          <SelectContent>
-            {agents?.map((agent) => (
-              <SelectItem key={agent._id} value={agent._id}>
-                <div className="flex flex-col">
-                  <span className="font-medium">{agent.name}</span>
-                  <span className="text-xs text-gray-500">{agent.description}</span>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
