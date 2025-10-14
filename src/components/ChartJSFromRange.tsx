@@ -89,14 +89,64 @@ function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
     return false;
   });
 
+  // Check if all rows follow the same pattern (label, value, value, ...)
+  // If all rows have the same structure, the first row is data, not a header
+  const allRowsHaveSamePattern = matrix.length > 1 && matrix.every((row, idx) => {
+    if (idx === 0) return true; // Skip first row in comparison
+    const firstCellIsLabel = typeof row[0] === "string" && isNaN(Number(row[0]));
+    const restAreMostlyNumeric = row.slice(1).every(cell => 
+      typeof cell === "number" || (typeof cell === "string" && !isNaN(Number(cell)))
+    );
+    return firstCellIsLabel && restAreMostlyNumeric;
+  });
+
+  // Check if first row also follows the same pattern as other rows
+  const firstRowFollowsSamePattern = 
+    matrix.length > 0 &&
+    typeof firstRow[0] === "string" && isNaN(Number(firstRow[0])) &&
+    firstRow.slice(1).some(cell => typeof cell === "number" || !isNaN(Number(cell)));
+
   console.log("Data structure analysis:", {
     firstRowHasNonNumericString,
     firstColHasNonNumericString,
+    allRowsHaveSamePattern,
+    firstRowFollowsSamePattern,
     dimensions: `${matrix.length} rows x ${matrix[0]?.length || 0} cols`
   });
 
-  // Case 1: First row is header, first column is labels
-  if (firstRowHasNonNumericString && firstColHasNonNumericString) {
+  // Case 1: First column has labels, and all rows (including first) follow the same pattern
+  // This means the first row is DATA, not a header
+  if (firstColHasNonNumericString && allRowsHaveSamePattern && firstRowFollowsSamePattern) {
+    const categoryLabels = matrix.map(row => String(row[0] || ""));
+    const seriesCount = Math.max(...matrix.map(row => row.length - 1), 0);
+    
+    const datasets = [];
+    for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
+      const seriesData = matrix.map(row => {
+        const value = row[seriesIndex + 1];
+        return typeof value === "number" ? value : Number(value) || 0;
+      });
+
+      datasets.push({
+        label: `Series ${seriesIndex + 1}`,
+        data: seriesData,
+        backgroundColor: COLORS[seriesIndex % COLORS.length],
+        borderColor: COLORS[seriesIndex % COLORS.length],
+        borderWidth: 2,
+      });
+    }
+
+    console.log("Case 1: All rows are data with label column:", { categoryLabels, datasets });
+
+    return {
+      labels: categoryLabels,
+      datasets,
+    };
+  }
+
+  // Case 2: First row is header, first column is labels (different patterns)
+  // Only when first row does NOT follow the same pattern as data rows
+  if (firstRowHasNonNumericString && firstColHasNonNumericString && !firstRowFollowsSamePattern) {
     const seriesLabels = firstRow.slice(1).map(cell => String(cell || ""));
     const dataRows = matrix.slice(1);
     const categoryLabels = dataRows.map(row => String(row[0] || ""));
@@ -119,7 +169,7 @@ function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
       });
     }
 
-    console.log("Case 1: Header row + label column:", { categoryLabels, seriesLabels, datasets });
+    console.log("Case 2: Header row + label column:", { categoryLabels, seriesLabels, datasets });
 
     return {
       labels: categoryLabels,
@@ -127,36 +177,7 @@ function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
     };
   }
 
-  // Case 2: First column has labels, no header row
-  if (firstColHasNonNumericString && !firstRowHasNonNumericString) {
-    const categoryLabels = matrix.map(row => String(row[0] || ""));
-    const seriesCount = Math.max(...matrix.map(row => row.length - 1), 0);
-    
-    const datasets = [];
-    for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
-      const seriesData = matrix.map(row => {
-        const value = row[seriesIndex + 1];
-        return typeof value === "number" ? value : Number(value) || 0;
-      });
-
-      datasets.push({
-        label: `Values ${seriesIndex + 1}`,
-        data: seriesData,
-        backgroundColor: COLORS[seriesIndex % COLORS.length],
-        borderColor: COLORS[seriesIndex % COLORS.length],
-        borderWidth: 2,
-      });
-    }
-
-    console.log("Case 2: Label column only:", { categoryLabels, datasets });
-
-    return {
-      labels: categoryLabels,
-      datasets,
-    };
-  }
-
-  // Case 3: First row is header, no label column (all numeric data)
+  // Case 3: First row is header, no label column
   if (firstRowHasNonNumericString && !firstColHasNonNumericString) {
     const seriesLabels = firstRow.map(cell => String(cell || ""));
     const dataRows = matrix.slice(1);
@@ -208,7 +229,7 @@ function parseSpreadsheetData(matrix: Array<Array<string | number>>) {
     });
   }
 
-  console.log("Case 4: All numeric:", { categoryLabels, datasets });
+  console.log("Case 4: All numeric data:", { categoryLabels, datasets });
 
   return {
     labels: categoryLabels,
@@ -311,11 +332,32 @@ const pieChartOptions = {
 
 export default function ChartJSFromRange({ sheetData, range, type, title, showSheetName = true, sheetName, showViewDownload = true }: Props) {
   const chartRef = useRef<any>(null);
-  // Find the sheet by name, fallback to first sheet if not found
+  // Find the sheet by name with fuzzy matching, fallback to first sheet if not found
   const sheet = useMemo(() => {
-    if (sheetName) {
-      const foundSheet = sheetData?.find(s => s.name === sheetName);
+    if (sheetName && sheetData) {
+      // First try exact match (case insensitive)
+      let foundSheet = sheetData.find(s => s.name?.toLowerCase() === sheetName.toLowerCase());
+      
+      // If no exact match, try partial match
+      if (!foundSheet) {
+        foundSheet = sheetData.find(s => 
+          s.name?.toLowerCase().includes(sheetName.toLowerCase()) || 
+          sheetName.toLowerCase().includes(s.name?.toLowerCase() || '')
+        );
+      }
+      
+      // If still no match, try word-based matching
+      if (!foundSheet) {
+        const sheetNameWords = sheetName.toLowerCase().split(/\s+/);
+        foundSheet = sheetData.find(s => {
+          const sName = s.name?.toLowerCase() || '';
+          return sheetNameWords.every(word => sName.includes(word));
+        });
+      }
+      
       if (foundSheet) return foundSheet;
+      
+      console.warn(`Sheet "${sheetName}" not found. Available sheets:`, sheetData.map(s => s.name));
     }
     // For existing charts without sheetName, use first sheet
     return sheetData?.[0];

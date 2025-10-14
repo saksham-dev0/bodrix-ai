@@ -1619,19 +1619,29 @@ export const generateStreamingAIResponse = internalAction({
         // Parse sheet name from the message with improved patterns
         let sheetName: string | undefined = undefined;
         
-        // Try different patterns for sheet names
+        // Try different patterns for sheet names, including "sheet name X" syntax
         const patterns = [
-          /(?:in|to|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-          /(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-          /(?:sheet|tab)(?:\s+named|\s+called)?\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+          // "in sheet name X" or "to sheet name X"
+          /(?:in|to|on|at)\s+(?:the\s+)?sheet\s+(?:name\s+|named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+?)["']?(?:\s+(?:create|make|add|with|$)|$)/i,
+          // "create sheet named X" or "make sheet called X"
+          /(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?sheet\s+(?:name\s+|named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+?)["']?(?:\s+(?:with|create|make|$)|$)/i,
+          // "sheet X" or "tab X"
+          /(?:sheet|tab)\s+(?:name\s+|named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+?)["']?(?:\s+(?:with|create|make|$)|$)/i,
+          // Quoted sheet name
+          /["']([A-Za-z][A-Za-z0-9_\-\s]+?)["']/i,
         ];
+        
+        const stopWords = ['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'for', 'of', 'by', 'from', 'at', 'table', 'is', 'it'];
         
         for (const pattern of patterns) {
           const match = args.userMessage.match(pattern);
           if (match && match[1]) {
             const name = match[1].trim();
-            if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'table'].includes(name.toLowerCase())) {
-              sheetName = name;
+            // Remove trailing words that are likely not part of the sheet name
+            const cleanedName = name.replace(/\s+(create|make|add|with)$/i, '').trim();
+            
+            if (cleanedName && !stopWords.includes(cleanedName.toLowerCase())) {
+              sheetName = cleanedName;
               break;
             }
           }
@@ -1703,21 +1713,106 @@ export const generateStreamingAIResponse = internalAction({
           else if (args.userMessage.toLowerCase().includes("area")) chartType = "area";
           else if (args.userMessage.toLowerCase().includes("bar")) chartType = "bar";
 
-          // Extract sheet name
+          // Extract sheet name with improved patterns and fuzzy matching
           let sheetName: string | undefined = undefined;
+          
+          // Get spreadsheet data first to know what sheets are available
+          const spreadsheetData = await ctx.runQuery(internal.ai.getSpreadsheetData, {
+            spreadsheetId: conversation.conversation.spreadsheetId,
+          });
+
+          if (!spreadsheetData?.data) {
+            throw new Error("No spreadsheet data found");
+          }
+
+          const data = JSON.parse(spreadsheetData.data);
+          const availableSheets = data.map((s: any) => s.name || "").filter((n: string) => n);
+          
+          console.log("Available sheets:", availableSheets);
+          console.log("User message:", args.userMessage);
+          
+          // Enhanced patterns to extract sheet name, including "sheet name X" syntax
           const sheetPatterns = [
-            /(?:in|from|on)\s+(?:sheet\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
-            /(?:sheet|tab)(?:\s+named|\s+called)?\s+["']?([A-Za-z][A-Za-z0-9_\-\s]*)["']?(?:\s|$|,|\.)/i,
+            // "in sheet name X" or "in sheet X"
+            /(?:in|from|on|at)\s+(?:the\s+)?sheet\s+(?:name\s+|named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+?)["']?(?:\s+(?:create|make|show|and|with|for|$)|$)/i,
+            // "sheet X" or "sheet named X"
+            /(?:sheet|tab)\s+(?:name\s+|named\s+|called\s+)?["']?([A-Za-z][A-Za-z0-9_\-\s]+?)["']?(?:\s+(?:create|make|show|and|with|for|$)|$)/i,
+            // Quoted sheet name
+            /["']([A-Za-z][A-Za-z0-9_\-\s]+?)["']/i,
           ];
+          
+          const stopWords = ['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with', 'for', 'of', 'by', 'from', 'at', 'is', 'it', 'this', 'that'];
+          let extractedName: string | undefined = undefined;
           
           for (const pattern of sheetPatterns) {
             const match = args.userMessage.match(pattern);
             if (match && match[1]) {
               const name = match[1].trim();
-              if (!['and', 'or', 'the', 'a', 'an', 'in', 'on', 'to', 'with'].includes(name.toLowerCase())) {
-                sheetName = name;
+              // Remove trailing words that are likely not part of the sheet name
+              const cleanedName = name.replace(/\s+(create|make|show|and|with|for)$/i, '').trim();
+              
+              if (cleanedName && !stopWords.includes(cleanedName.toLowerCase())) {
+                extractedName = cleanedName;
+                console.log("Extracted sheet name from pattern:", extractedName);
                 break;
               }
+            }
+          }
+          
+          // If no pattern matched, try to find any sheet name mentioned in the message
+          if (!extractedName && availableSheets.length > 0) {
+            for (const sheet of availableSheets) {
+              // Check if the sheet name appears in the message (case insensitive)
+              if (args.userMessage.toLowerCase().includes(sheet.toLowerCase())) {
+                extractedName = sheet;
+                console.log("Found sheet name in message:", extractedName);
+                break;
+              }
+            }
+          }
+          
+          // Now find the best matching sheet from available sheets
+          if (extractedName) {
+            const extractedLower = extractedName.toLowerCase();
+            
+            // First try exact match (case insensitive)
+            let matchedSheet = availableSheets.find((s: string) => 
+              s.toLowerCase() === extractedLower
+            );
+            
+            // If no exact match, try partial match (sheet name contains extracted name or vice versa)
+            if (!matchedSheet) {
+              matchedSheet = availableSheets.find((s: string) => 
+                s.toLowerCase().includes(extractedLower) || 
+                extractedLower.includes(s.toLowerCase())
+              );
+            }
+            
+            // If still no match, try word-based matching (all words in extracted name appear in sheet name)
+            if (!matchedSheet) {
+              const extractedWords = extractedLower.split(/\s+/);
+              matchedSheet = availableSheets.find((s: string) => {
+                const sheetLower = s.toLowerCase();
+                return extractedWords.every((word: string) => sheetLower.includes(word));
+              });
+            }
+            
+            if (matchedSheet) {
+              sheetName = matchedSheet;
+              console.log(`Matched sheet: "${extractedName}" -> "${sheetName}"`);
+            } else {
+              console.log(`No match found for extracted name: "${extractedName}"`);
+            }
+          }
+          
+          // If still no sheet name found, use active sheet name or first sheet
+          if (!sheetName) {
+            if (args.activeSheetName && availableSheets.includes(args.activeSheetName)) {
+              sheetName = args.activeSheetName;
+              console.log("Using active sheet:", sheetName);
+            } else if (availableSheets.length > 0) {
+              sheetName = availableSheets[0];
+              console.log("Using first available sheet:", sheetName);
             }
           }
 
@@ -1739,38 +1834,39 @@ export const generateStreamingAIResponse = internalAction({
           }
 
           if (columns.length === 0) {
+            const sheetList = availableSheets.length > 0 
+              ? `\n\nAvailable sheets: ${availableSheets.map((s: string) => `"${s}"`).join(", ")}`
+              : "";
+            
             await ctx.runMutation(internal.ai.updateStreamingMessage, {
               messageId,
-              content: "Please specify which columns you want to visualize. For example: 'create a bar chart of product name and price in Sheet1'",
+              content: `Please specify which columns you want to visualize. For example: 'create a bar chart of column1 and column2 in sheet name ${availableSheets[0] || "Sheet1"}'${sheetList}`,
               isComplete: true,
             });
             return null;
           }
 
           if (!sheetName) {
+            const sheetList = availableSheets.length > 0 
+              ? `\n\nAvailable sheets: ${availableSheets.map((s: string) => `"${s}"`).join(", ")}`
+              : "";
+            
             await ctx.runMutation(internal.ai.updateStreamingMessage, {
               messageId,
-              content: "Please specify which sheet contains the data. For example: 'create a bar chart of product name and price in Sheet1'",
+              content: `Please specify which sheet contains the data. For example: 'create a bar chart of column1 and column2 in sheet name ${availableSheets[0] || "Sheet1"}'${sheetList}`,
               isComplete: true,
             });
             return null;
           }
-
-          // Get spreadsheet data to find the columns
-          const spreadsheetData = await ctx.runQuery(internal.ai.getSpreadsheetData, {
-            spreadsheetId: conversation.conversation.spreadsheetId,
-          });
-
-          if (!spreadsheetData?.data) {
-            throw new Error("No spreadsheet data found");
-          }
-
-          const data = JSON.parse(spreadsheetData.data);
           
-          // Find the specified sheet
+          // Find the specified sheet (sheetName is now guaranteed to be a valid sheet name from our matching logic)
           const targetSheet = data.find((s: any) => s.name === sheetName);
           if (!targetSheet) {
-            throw new Error(`Sheet "${sheetName}" not found`);
+            const sheetList = availableSheets.length > 0 
+              ? `\n\nAvailable sheets: ${availableSheets.map((s: string) => `"${s}"`).join(", ")}`
+              : "";
+            
+            throw new Error(`Sheet "${sheetName}" not found. Please use one of the available sheet names.${sheetList}`);
           }
 
           // Helper function to check if a cell text is a calculated row label
@@ -1934,9 +2030,26 @@ export const generateStreamingAIResponse = internalAction({
         } catch (error) {
           console.error("Error creating chart:", error);
           
+          // Try to get available sheets for better error message
+          let availableSheetsMsg = "";
+          try {
+            const spreadsheetData = await ctx.runQuery(internal.ai.getSpreadsheetData, {
+              spreadsheetId: conversation.conversation.spreadsheetId,
+            });
+            if (spreadsheetData?.data) {
+              const data = JSON.parse(spreadsheetData.data);
+              const availableSheets = data.map((s: any) => s.name || "").filter((n: string) => n);
+              if (availableSheets.length > 0) {
+                availableSheetsMsg = `\n\nAvailable sheets: ${availableSheets.map((s: string) => `"${s}"`).join(", ")}`;
+              }
+            }
+          } catch (e) {
+            console.error("Error getting available sheets for error message:", e);
+          }
+          
           await ctx.runMutation(internal.ai.updateStreamingMessage, {
             messageId,
-            content: `Failed to create chart: ${error instanceof Error ? error.message : String(error)}. Please make sure the columns and sheet name are correct.`,
+            content: `Failed to create chart: ${error instanceof Error ? error.message : String(error)}. Please make sure the columns and sheet name are correct.${availableSheetsMsg}`,
             isComplete: true,
           });
           
