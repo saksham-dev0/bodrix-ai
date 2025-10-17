@@ -25,7 +25,7 @@ import {
   LayoutDashboard,
   BarChart3,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import SheetXSpreadsheetIframe, {
   SheetRef,
@@ -40,9 +40,11 @@ interface SpreadsheetPageProps {
 
 const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const resolvedParams = use(params);
   const projectId = resolvedParams.projectId as Id<"projects">;
   const { user, isSignedIn, isLoaded } = useUser();
+  const spreadsheetIdFromQuery = searchParams.get("id") as Id<"spreadsheets"> | null;
 
   const [spreadsheetName, setSpreadsheetName] = useState(
     "Untitled Spreadsheet"
@@ -108,12 +110,34 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
     const initializeSpreadsheet = async () => {
       if (!projectSpreadsheets) return;
 
+      console.log("Spreadsheet Page - Initializing...");
+      console.log("Spreadsheet Page - Query param ID:", spreadsheetIdFromQuery);
+      console.log("Spreadsheet Page - Available spreadsheets:", projectSpreadsheets);
+
+      // If spreadsheet ID is provided in query parameter, load that specific spreadsheet
+      if (spreadsheetIdFromQuery) {
+        const targetSpreadsheet = projectSpreadsheets.find(
+          (s) => s._id === spreadsheetIdFromQuery
+        );
+        if (targetSpreadsheet) {
+          console.log("Spreadsheet Page - Loading target spreadsheet:", targetSpreadsheet);
+          setSpreadsheetId(targetSpreadsheet._id);
+          setSpreadsheetName(targetSpreadsheet.name);
+          return;
+        } else {
+          console.log("Spreadsheet Page - Target spreadsheet not found in project");
+        }
+      }
+
+      // Otherwise, load the first spreadsheet or create a new one
       if (projectSpreadsheets.length > 0) {
         const existingSpreadsheet = projectSpreadsheets[0];
+        console.log("Spreadsheet Page - Loading first spreadsheet:", existingSpreadsheet);
         setSpreadsheetId(existingSpreadsheet._id);
         setSpreadsheetName(existingSpreadsheet.name);
       } else {
         try {
+          console.log("Spreadsheet Page - Creating new spreadsheet");
           const newSpreadsheetId = await createSpreadsheet({
             projectId,
             name: spreadsheetName,
@@ -128,7 +152,7 @@ const SpreadsheetPage = ({ params }: SpreadsheetPageProps) => {
     };
 
     initializeSpreadsheet();
-  }, [projectSpreadsheets, projectId, createSpreadsheet, spreadsheetName]);
+  }, [projectSpreadsheets, projectId, createSpreadsheet, spreadsheetName, spreadsheetIdFromQuery]);
 
   const handleNameSave = async () => {
     if (spreadsheetId && spreadsheetName.trim()) {

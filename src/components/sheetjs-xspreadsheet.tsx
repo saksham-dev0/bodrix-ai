@@ -541,8 +541,15 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
         } else if (!dataString && (spreadsheetData as any)?.workbookData) {
           dataString = (spreadsheetData as any).workbookData;
         }
+        console.log("SheetJS Component - Loading data for spreadsheet:", spreadsheetId);
+        console.log("SheetJS Component - Data string length:", dataString?.length);
+        console.log("SheetJS Component - Data preview:", dataString?.substring(0, 200));
         if (dataString && dataString !== "undefined") {
           const parsed = JSON.parse(dataString);
+          console.log("SheetJS Component - Parsed data:", parsed);
+          console.log("SheetJS Component - Number of sheets:", parsed?.length);
+          console.log("SheetJS Component - First sheet name:", parsed?.[0]?.name);
+          console.log("SheetJS Component - First sheet rows:", parsed?.[0]?.rows);
           win.__grid.loadData(parsed);
           // ensure correct layout after loading
           setTimeout(() => {
@@ -554,11 +561,13 @@ export const SheetXSpreadsheetIframe = forwardRef<SheetRef, Props>(
               win.__grid.resize(root.clientWidth, root.clientHeight);
             } catch (e) {}
           }, 80);
+        } else {
+          console.log("SheetJS Component - No data to load or data is undefined");
         }
       } catch (e) {
         console.warn("Failed to parse/load spreadsheet data into iframe", e);
       }
-    }, [spreadsheetData, refreshTrigger, initDoneRef.current]);
+    }, [spreadsheetData, refreshTrigger, initDoneRef.current, spreadsheetId]);
 
     // Cleanup interval on unmount
     useEffect(() => {

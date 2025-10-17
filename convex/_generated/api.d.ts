@@ -13,6 +13,7 @@ import type * as aiAgents from "../aiAgents.js";
 import type * as dashboards from "../dashboards.js";
 import type * as documents from "../documents.js";
 import type * as http from "../http.js";
+import type * as integrations from "../integrations.js";
 import type * as projects from "../projects.js";
 import type * as spreadsheets from "../spreadsheets.js";
 import type * as users from "../users.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   dashboards: typeof dashboards;
   documents: typeof documents;
   http: typeof http;
+  integrations: typeof integrations;
   projects: typeof projects;
   spreadsheets: typeof spreadsheets;
   users: typeof users;

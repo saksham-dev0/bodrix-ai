@@ -99,12 +99,14 @@ export default defineSchema({
     agentId: v.optional(v.string()),
     modelName: v.optional(v.string()),
     provider: v.optional(v.string()), // "openai", "anthropic", "google", "mistral"
-    agentType: v.optional(v.union(
-      v.literal("general"),
-      v.literal("clean"),
-      v.literal("summarize"),
-      v.literal("trend")
-    )),
+    agentType: v.optional(
+      v.union(
+        v.literal("general"),
+        v.literal("clean"),
+        v.literal("summarize"),
+        v.literal("trend"),
+      ),
+    ),
     // Streaming support
     isStreaming: v.optional(v.boolean()), // true if message is currently being streamed
     isComplete: v.optional(v.boolean()), // true if streaming is complete
@@ -126,12 +128,14 @@ export default defineSchema({
     modelName: v.string(),
     systemPrompt: v.string(),
     // Agent type: specialized capabilities (optional for backward compatibility)
-    agentType: v.optional(v.union(
-      v.literal("general"),
-      v.literal("clean"),
-      v.literal("summarize"),
-      v.literal("trend")
-    )),
+    agentType: v.optional(
+      v.union(
+        v.literal("general"),
+        v.literal("clean"),
+        v.literal("summarize"),
+        v.literal("trend"),
+      ),
+    ),
     isActive: v.boolean(),
     ownerId: v.id("users"),
     createdAt: v.number(),
@@ -168,7 +172,7 @@ export default defineSchema({
       v.literal("pending"),
       v.literal("processing"),
       v.literal("completed"),
-      v.literal("failed")
+      v.literal("failed"),
     ),
     errorMessage: v.optional(v.string()),
     createdAt: v.number(),
@@ -203,7 +207,7 @@ export default defineSchema({
       v.literal("chart"),
       v.literal("metric"),
       v.literal("table"),
-      v.literal("text")
+      v.literal("text"),
     ),
     title: v.string(),
     // For chart widgets
@@ -212,8 +216,8 @@ export default defineSchema({
         v.literal("line"),
         v.literal("bar"),
         v.literal("area"),
-        v.literal("pie")
-      )
+        v.literal("pie"),
+      ),
     ),
     range: v.optional(v.string()),
     sheetName: v.optional(v.string()),
@@ -236,4 +240,52 @@ export default defineSchema({
   })
     .index("by_dashboard", ["dashboardId"])
     .index("by_owner", ["ownerId"]),
+
+  // Third-party integrations (Airtable, Notion, Google Sheets, etc.)
+  integrations: defineTable({
+    userId: v.id("users"),
+    provider: v.union(
+      v.literal("airtable"),
+      v.literal("notion"),
+      v.literal("google_sheets"),
+    ),
+    accessToken: v.string(), // Encrypted token
+    metadata: v.optional(
+      v.object({
+        accountName: v.optional(v.string()),
+        accountEmail: v.optional(v.string()),
+        baseNames: v.optional(v.array(v.string())),
+        lastValidatedAt: v.optional(v.number()),
+      }),
+    ),
+    status: v.union(
+      v.literal("active"),
+      v.literal("error"),
+      v.literal("disconnected"),
+    ),
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_provider", ["provider"])
+    .index("by_status", ["status"]),
+
+  // Track imported data from external sources
+  airtableImports: defineTable({
+    userId: v.id("users"),
+    spreadsheetId: v.id("spreadsheets"),
+    integrationId: v.id("integrations"),
+    baseId: v.string(),
+    tableName: v.string(),
+    tableId: v.string(),
+    lastSyncedAt: v.optional(v.number()),
+    recordCount: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_integration", ["integrationId"])
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_base", ["baseId"]),
 });
